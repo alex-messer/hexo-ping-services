@@ -1,7 +1,7 @@
 {
   "name": "hexo-ping-services",
-  "version": "0.2.0",
-  "description": "Notify IndexNow and XML-RPC update services on Hexo publish/update.",
+  "version": "0.3.0",
+  "description": "Notify IndexNow, XML-RPC, and WebSub update services on Hexo publish/update.",
   "license": "MIT",
   "author": "alex-messer <alex@messer.pw>",
   "main": "./index.js",
@@ -31,6 +31,8 @@
     "hexo-plugin",
     "indexnow",
     "xml-rpc",
+    "websub",
+    "pubsubhubbub",
     "weblogupdates",
     "ping",
     "seo"

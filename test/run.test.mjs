@@ -249,6 +249,116 @@ test('runPing passes concurrency parameter to pingAll', async () => {
   }
 });
 
+test('runPing fans out to websub hubs when websub.enabled with hubs', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'hps-run-'));
+  let captured = null;
+  const hub = await startMockServer(async ({ body, headers }) => {
+    captured = { body, contentType: headers['content-type'] };
+    return { status: 204, body: '' };
+  });
+  const indexnow = await startMockServer(async () => ({ status: 200, body: '' }));
+  try {
+    const hexo = fakeHexo(
+      [{ permalink: 'https://x/a/', date: '2026-01-01' }],
+      dir,
+      {
+        indexnow: { endpoint: indexnow.url },
+        xmlrpc: { endpoints: [] },
+        top: {
+          websub: { enabled: true, hubs: [hub.url], feed_url: '/atom.xml' }
+        }
+      }
+    );
+    const result = await runPing(hexo, {});
+    assert.equal(result.websubResults.length, 1);
+    assert.equal(result.websubResults[0].status, 'ok');
+    assert.equal(result.websubResults[0].httpStatus, 204);
+    assert.match(captured.contentType, /application\/x-www-form-urlencoded/);
+    const params = new URLSearchParams(captured.body);
+    assert.equal(params.get('hub.mode'), 'publish');
+    assert.equal(params.get('hub.url'), 'https://einfach-aleks.com/atom.xml');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    await hub.close();
+    await indexnow.close();
+  }
+});
+
+test('runPing default websubResults is empty array when websub disabled', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'hps-run-'));
+  const indexnow = await startMockServer(async () => ({ status: 200, body: '' }));
+  try {
+    const hexo = fakeHexo(
+      [{ permalink: 'https://x/a/', date: '2026-01-01' }],
+      dir,
+      { indexnow: { endpoint: indexnow.url }, xmlrpc: { endpoints: [] } }
+    );
+    const result = await runPing(hexo, {});
+    assert.deepEqual(result.websubResults, []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    await indexnow.close();
+  }
+});
+
+test('runPing commits state when only websub engine succeeds', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'hps-run-'));
+  // IndexNow fails (403), no xmlrpc, websub succeeds.
+  const indexnow = await startMockServer(async () => ({ status: 403, body: '' }));
+  const hub = await startMockServer(async () => ({ status: 204, body: '' }));
+  try {
+    const hexo = fakeHexo(
+      [{ permalink: 'https://x/a/', date: '2026-01-01' }],
+      dir,
+      {
+        indexnow: { endpoint: indexnow.url },
+        xmlrpc: { endpoints: [] },
+        top: { websub: { enabled: true, hubs: [hub.url], feed_url: '/atom.xml' } }
+      }
+    );
+    await runPing(hexo, {});
+    assert.equal(existsSync(join(dir, '.hexo-ping-state.json')), true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    await hub.close();
+    await indexnow.close();
+  }
+});
+
+test('runPing accepts absolute websub feed_url', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'hps-run-'));
+  let captured = null;
+  const hub = await startMockServer(async ({ body }) => {
+    captured = body;
+    return { status: 204, body: '' };
+  });
+  const indexnow = await startMockServer(async () => ({ status: 200, body: '' }));
+  try {
+    const hexo = fakeHexo(
+      [{ permalink: 'https://x/a/', date: '2026-01-01' }],
+      dir,
+      {
+        indexnow: { endpoint: indexnow.url },
+        xmlrpc: { endpoints: [] },
+        top: {
+          websub: {
+            enabled: true,
+            hubs: [hub.url],
+            feed_url: 'https://feeds.example.com/blog.xml'
+          }
+        }
+      }
+    );
+    await runPing(hexo, {});
+    const params = new URLSearchParams(captured);
+    assert.equal(params.get('hub.url'), 'https://feeds.example.com/blog.xml');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    await hub.close();
+    await indexnow.close();
+  }
+});
+
 test('runPing rejects pseudo-http key_location like httpevil.example.com/x.txt', async () => {
   // M1 fix: keyLocation that "starts with http" but isn't really an http URL
   // must be treated as a path and joined to the site URL.

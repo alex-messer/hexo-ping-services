@@ -32,6 +32,11 @@ function logHuman(result) {
       lines.push(`  xmlrpc ${r.endpoint}: ${r.status}${fault} (HTTP ${r.httpStatus}, ${r.durationMs}ms)`);
     }
   }
+  if (result.websubResults) {
+    for (const r of result.websubResults) {
+      lines.push(`  websub ${r.hub}: ${r.status} (HTTP ${r.httpStatus}, ${r.durationMs}ms)`);
+    }
+  }
   return lines.join('\n');
 }
 
@@ -45,6 +50,11 @@ function logJson(result) {
   if (result.xmlrpcResults) {
     for (const r of result.xmlrpcResults) {
       out.push(JSON.stringify({ level: r.status === 'ok' ? 'info' : 'warn', engine: 'xmlrpc', ...r }));
+    }
+  }
+  if (result.websubResults) {
+    for (const r of result.websubResults) {
+      out.push(JSON.stringify({ level: r.status === 'ok' ? 'info' : 'warn', engine: 'websub', ...r }));
     }
   }
   return out.join('\n');

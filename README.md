@@ -1,19 +1,20 @@
 # hexo-ping-services
 
-Notify [IndexNow](https://www.indexnow.org/) (Bing, Yandex, Naver, Seznam, Yep)
-and a curated XML-RPC `weblogUpdates.ping` endpoint set whenever your Hexo blog
-publishes a new post or updates an existing one.
+Notify [IndexNow](https://www.indexnow.org/) (Bing, Yandex, Naver, Seznam, Yep),
+a curated XML-RPC `weblogUpdates.ping` endpoint set, and [WebSub](https://www.w3.org/TR/websub/)
+hubs whenever your Hexo blog publishes a new post or updates an existing one.
 
 - **Zero runtime dependencies.** Native `fetch` + a 30-line XML-RPC encoder.
 - **State-aware.** A small `.hexo-ping-state.json` file remembers the last-pinged
   content hash per URL, so unchanged posts aren't re-pinged on every build.
-- **Tested.** ~50 unit tests run on Node 22 + 24 via `node --test`.
+- **Tested.** ~130 unit tests run on Node 22 + 24 via `node --test`.
 
 ## Why
 
-WordPress has shipped `weblogUpdates.ping` since 2003. The modern equivalent is
-IndexNow (one POST → Bing, Yandex, Naver, Seznam, Yep). Hexo had no maintained
-plugin combining both — this package fills that gap.
+WordPress has shipped `weblogUpdates.ping` since 2003. The modern equivalents
+are IndexNow (one POST → Bing, Yandex, Naver, Seznam, Yep) and WebSub (push
+notifications to feed readers). Hexo had no maintained plugin combining them —
+this package fills that gap.
 
 ## Install
 
@@ -40,6 +41,12 @@ ping:
       - https://rpc.pingomatic.com/
       - https://rpc.twingly.com/
     feed_url: /atom.xml         # optional → uses extendedPing if set
+  websub:
+    enabled: false              # opt-in
+    hubs:
+      - https://pubsubhubbub.appspot.com/
+      - https://push.superfeedr.com/
+    feed_url: /atom.xml         # absolute or relative-to-site URL
   state_file: .hexo-ping-state.json
   timeout_ms: 5000
 ```
@@ -116,6 +123,26 @@ fire-and-forget (warnings, no exit-1).
 
 When `feed_url` is set, sends `weblogUpdates.extendedPing` (4 params) instead
 of plain `ping` (2 params).
+
+### WebSub
+
+[WebSub](https://www.w3.org/TR/websub/) (W3C Recommendation, formerly
+PubSubHubbub) is a push-based notification protocol for feed updates. When
+enabled, this engine POSTs `hub.mode=publish&hub.url=<feed-url>` (form-urlencoded)
+to every configured hub. The hub then fans the new content out to all
+subscribers — push instead of poll for RSS/Atom readers.
+
+Suggested hub set (operational 2026-05):
+`https://pubsubhubbub.appspot.com/` (Google legacy),
+`https://push.superfeedr.com/` (commercial, accepts free publish).
+
+Status codes:
+- `2xx` → ok
+- `429` → rate-limited (warning)
+- everything else → error (warning, no exit-1)
+
+Disabled by default. To enable, set `websub.enabled: true` and list at least
+one hub.
 
 ## License
 

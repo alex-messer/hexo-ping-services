@@ -73,3 +73,48 @@ test('resolveConfig caps indexnow.key length at 256 chars', () => {
     /indexnow\.key too long \(max 256 chars\)/
   );
 });
+
+test('resolveConfig defaults websub to disabled with empty hubs and /atom.xml', () => {
+  const c = resolveConfig({});
+  assert.equal(c.websub.enabled, false);
+  assert.deepEqual(c.websub.hubs, []);
+  assert.equal(c.websub.feedUrl, '/atom.xml');
+});
+
+test('resolveConfig accepts user-provided websub block', () => {
+  const c = resolveConfig({
+    ping: {
+      indexnow: { enabled: false },
+      websub: {
+        enabled: true,
+        hubs: ['https://pubsubhubbub.appspot.com/'],
+        feed_url: '/feed.xml'
+      }
+    }
+  });
+  assert.equal(c.websub.enabled, true);
+  assert.deepEqual(c.websub.hubs, ['https://pubsubhubbub.appspot.com/']);
+  assert.equal(c.websub.feedUrl, '/feed.xml');
+});
+
+test('resolveConfig caps websub.hubs at 16', () => {
+  const hubs = Array.from({ length: 17 }, (_, i) => `https://hub${i}.example.com/`);
+  assert.throws(
+    () => resolveConfig({ ping: { indexnow: { enabled: false }, websub: { hubs } } }),
+    /too many websub hubs \(max 16\)/
+  );
+});
+
+test('resolveConfig accepts exactly 16 websub hubs', () => {
+  const hubs = Array.from({ length: 16 }, (_, i) => `https://hub${i}.example.com/`);
+  const c = resolveConfig({ ping: { indexnow: { enabled: false }, websub: { hubs } } });
+  assert.equal(c.websub.hubs.length, 16);
+});
+
+test('resolveConfig caps websub.feed_url length at 2048 chars', () => {
+  const longFeed = 'https://example.com/' + 'a'.repeat(2048);
+  assert.throws(
+    () => resolveConfig({ ping: { indexnow: { enabled: false }, websub: { feed_url: longFeed } } }),
+    /websub\.feed_url too long \(max 2048 chars\)/
+  );
+});

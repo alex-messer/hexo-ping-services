@@ -86,6 +86,40 @@ test('logJson: emits one JSON line per engine result with level', () => {
   assert.equal(j2.level, 'warn');
 });
 
+test('logHuman: renders websub hub lines', () => {
+  const out = logHuman({
+    plan: ['https://x/a/'],
+    indexnowResults: null,
+    xmlrpcResults: null,
+    websubResults: [
+      { hub: 'https://pubsubhubbub.appspot.com/', status: 'ok', httpStatus: 204, durationMs: 42 },
+      { hub: 'https://push.superfeedr.com/', status: 'error', httpStatus: 500, durationMs: 11 }
+    ]
+  });
+  assert.match(out, /websub https:\/\/pubsubhubbub\.appspot\.com\/: ok \(HTTP 204, 42ms\)/);
+  assert.match(out, /websub https:\/\/push\.superfeedr\.com\/: error \(HTTP 500, 11ms\)/);
+});
+
+test('logJson: emits websub engine lines with level', () => {
+  const out = logJson({
+    plan: ['https://x/a/'],
+    indexnowResults: null,
+    xmlrpcResults: null,
+    websubResults: [
+      { hub: 'https://hub.example.com/', status: 'ok', httpStatus: 204, durationMs: 21 },
+      { hub: 'https://hub2.example.com/', status: 'rate-limited', httpStatus: 429, durationMs: 12 }
+    ]
+  });
+  const lines = out.split('\n');
+  assert.equal(lines.length, 2);
+  const j0 = JSON.parse(lines[0]);
+  assert.equal(j0.engine, 'websub');
+  assert.equal(j0.level, 'info');
+  const j1 = JSON.parse(lines[1]);
+  assert.equal(j1.engine, 'websub');
+  assert.equal(j1.level, 'warn');
+});
+
 // End-to-end tests against the registered handler ---------------------------
 
 test('ping console handler reports no URLs when state is current', async () => {
