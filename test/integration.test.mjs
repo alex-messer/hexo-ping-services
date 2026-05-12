@@ -71,3 +71,38 @@ test('plugin loads in a real Hexo instance without ERR_VM_DYNAMIC_IMPORT_CALLBAC
     cleanup();
   }
 });
+
+test('hexo ping CLI calls hexo.load() so posts are visible', async () => {
+  const { dir, cleanup } = setupFakeBlog();
+  try {
+    // Create a fake post file so hexo.load() has something to process.
+    writeFileSync(
+      join(dir, 'source/_posts/hello.md'),
+      '---\ntitle: Hello\ndate: 2026-01-01\n---\nbody\n'
+    );
+
+    const hexo = new Hexo(dir, { safe: false });
+    await hexo.init();
+
+    // Track whether hexo.load was called by the ping console command.
+    let loadCalled = false;
+    const originalLoad = hexo.load.bind(hexo);
+    hexo.load = async function (...args) {
+      loadCalled = true;
+      return originalLoad(...args);
+    };
+
+    // Load and register the plugin against this Hexo instance.
+    const pluginPath = resolve('./index.js');
+    await loadPluginLikeHexo(hexo, pluginPath);
+
+    // Invoke the ping console command with --dry-run --all.
+    const pingCmd = hexo.extend.console.list().ping;
+    await pingCmd.call(hexo, { 'dry-run': true, all: true });
+
+    assert.ok(loadCalled, 'hexo.load() must be called by the ping console command');
+    await hexo.exit();
+  } finally {
+    cleanup();
+  }
+});

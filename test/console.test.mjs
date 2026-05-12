@@ -25,6 +25,10 @@ function makeFakeHexo({ posts = [], pingConfig, baseDir }) {
     },
     locals: { get: (n) => n === 'posts' ? { data: posts } : null },
     log: { info: () => {}, warn: () => {} },
+    // Mirror the real Hexo API: ping console handler calls this.load()
+    // to populate locals before running. No-op in unit tests since
+    // locals.posts is already injected via the constructor argument.
+    load: async () => {},
     extend: {
       console: {
         register: (name, _desc, _opts, handler) => { consoleHandlers.set(name, handler); }

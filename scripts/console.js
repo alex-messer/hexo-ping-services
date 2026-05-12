@@ -63,6 +63,10 @@ function registerConsole(hexo) {
   }, async function (argv) {
     const options = parseArgs(argv);
     try {
+      // Custom console commands don't auto-trigger Hexo's source loader;
+      // call it explicitly so we have access to posts in locals.
+      // Idempotent on subsequent calls.
+      await this.load();
       const result = await runPing(this, options);
       if (options.verbose) process.stdout.write(logJson(result) + '\n');
       process.stderr.write(logHuman(result) + '\n');
