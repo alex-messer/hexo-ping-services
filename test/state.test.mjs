@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync, readdirSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readState, diff, commit } from '../lib/state.mjs';
+import { readState, diff, commit } from '../lib/state.js';
 
 function tmp() {
   const d = mkdtempSync(join(tmpdir(), 'hps-state-'));
@@ -62,6 +62,31 @@ test('commit writes file atomically and updates entries', () => {
     assert.ok(reloaded.lastRun);
     assert.equal(reloaded.urls['https://x/'].contentHash, 'sha256:abc');
     assert.ok(reloaded.urls['https://x/'].lastPinged);
+  } finally { cleanup(); }
+});
+
+test('readState refuses to follow a symlinked state file', () => {
+  const { dir, file, cleanup } = tmp();
+  try {
+    const target = join(dir, 'target.json');
+    writeFileSync(target, JSON.stringify({ version: 1, lastRun: 't', urls: {} }));
+    symlinkSync(target, file);
+    assert.throws(() => readState(file), /symlink, refusing for security/);
+  } finally { cleanup(); }
+});
+
+test('commit refuses to write through a symlinked state file', () => {
+  const { dir, file, cleanup } = tmp();
+  try {
+    const decoy = join(dir, 'decoy.json');
+    writeFileSync(decoy, 'do not overwrite me');
+    symlinkSync(decoy, file);
+    assert.throws(
+      () => commit(file, { version: 1, lastRun: null, urls: {} }, [{ url: 'https://x/', contentHash: 'sha256:abc' }]),
+      /symlink, refusing for security/
+    );
+    // Decoy must be untouched.
+    assert.equal(readFileSync(decoy, 'utf8'), 'do not overwrite me');
   } finally { cleanup(); }
 });
 

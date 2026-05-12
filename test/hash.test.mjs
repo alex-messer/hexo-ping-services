@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { hashOf } from '../lib/hash.mjs';
+import { hashOf } from '../lib/hash.js';
 
 test('hashOf returns deterministic sha256: hex for identical input', () => {
   const a = hashOf({ permalink: 'https://example.com/a/', date: '2026-01-01' });

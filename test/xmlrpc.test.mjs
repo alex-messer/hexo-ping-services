@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPingPayload, pingEndpoint, pingAll } from '../lib/xmlrpc.mjs';
+import { buildPingPayload, pingEndpoint, pingAll } from '../lib/xmlrpc.js';
 import { startMockServer } from './helpers/mock-http.mjs';
 
 test('buildPingPayload emits weblogUpdates.ping with 2 string params', () => {
@@ -67,6 +67,54 @@ test('pingEndpoint respects timeoutMs', async () => {
     const r = await pingEndpoint(server.url, '<dummy/>', { timeoutMs: 50 });
     assert.equal(r.status, 'error');
   } finally { await server.close(); }
+});
+
+test('pingEndpoint blocks private/loopback endpoint without HTTP', async () => {
+  const prev = process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS;
+  delete process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS;
+  try {
+    const r = await pingEndpoint('http://127.0.0.1:1/', '<dummy/>', { timeoutMs: 1000 });
+    assert.equal(r.status, 'blocked');
+    assert.match(r.error, /private\/loopback host/);
+  } finally {
+    if (prev !== undefined) process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS = prev;
+  }
+});
+
+test('pingEndpoint blocks non-http(s) scheme', async () => {
+  const prev = process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS;
+  delete process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS;
+  try {
+    const r = await pingEndpoint('file:///etc/passwd', '<dummy/>', { timeoutMs: 1000 });
+    assert.equal(r.status, 'blocked');
+  } finally {
+    if (prev !== undefined) process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS = prev;
+  }
+});
+
+test('pingAll caps parallelism via concurrency parameter', async () => {
+  // Build 6 servers; with concurrency=2, at most 2 may be in flight at once.
+  let inFlight = 0;
+  let peak = 0;
+  const make = () => startMockServer(async () => {
+    inFlight++;
+    peak = Math.max(peak, inFlight);
+    await new Promise(r => setTimeout(r, 30));
+    inFlight--;
+    return { status: 200, body: '<methodResponse><params/></methodResponse>' };
+  });
+  const servers = await Promise.all([make(), make(), make(), make(), make(), make()]);
+  try {
+    const results = await pingAll(
+      servers.map(s => s.url),
+      'Site', 'https://x/', null,
+      { timeoutMs: 2000, concurrency: 2 }
+    );
+    assert.equal(results.length, 6);
+    assert.ok(peak <= 2, `peak in-flight must be <= 2, got ${peak}`);
+  } finally {
+    await Promise.all(servers.map(s => s.close()));
+  }
 });
 
 test('pingAll calls every endpoint, collects results', async () => {

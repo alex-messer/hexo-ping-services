@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { collectUrls } from '../lib/collect-urls.mjs';
+import { collectUrls } from '../lib/collect-urls.js';
 
 function fakeHexo(posts) {
   return {

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseArgs } from '../scripts/console.mjs';
+import { parseArgs } from '../scripts/console.js';
 
 test('parseArgs returns defaults for empty argv', () => {
   const r = parseArgs({});

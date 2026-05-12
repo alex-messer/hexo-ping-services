@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveConfig } from '../lib/config.mjs';
+import { resolveConfig } from '../lib/config.js';
 
 test('resolveConfig fills defaults when block is missing', () => {
   const c = resolveConfig({});
@@ -42,4 +42,34 @@ test('resolveConfig allows indexnow disabled without key', () => {
 test('resolveConfig respects ping.enabled=false short-circuit', () => {
   const c = resolveConfig({ ping: { enabled: false } });
   assert.equal(c.enabled, false);
+});
+
+test('resolveConfig caps xmlrpc.endpoints at 32', () => {
+  const endpoints = Array.from({ length: 33 }, (_, i) => `https://rpc${i}.example.com/`);
+  assert.throws(
+    () => resolveConfig({ ping: { indexnow: { enabled: false }, xmlrpc: { endpoints } } }),
+    /too many endpoints \(max 32\)/
+  );
+});
+
+test('resolveConfig accepts exactly 32 xmlrpc endpoints', () => {
+  const endpoints = Array.from({ length: 32 }, (_, i) => `https://rpc${i}.example.com/`);
+  const c = resolveConfig({ ping: { indexnow: { enabled: false }, xmlrpc: { endpoints } } });
+  assert.equal(c.xmlrpc.endpoints.length, 32);
+});
+
+test('resolveConfig caps feed_url length at 2048 chars', () => {
+  const longFeed = 'https://example.com/' + 'a'.repeat(2048);
+  assert.throws(
+    () => resolveConfig({ ping: { indexnow: { enabled: false }, xmlrpc: { feed_url: longFeed } } }),
+    /feed_url too long \(max 2048 chars\)/
+  );
+});
+
+test('resolveConfig caps indexnow.key length at 256 chars', () => {
+  const longKey = 'a'.repeat(257);
+  assert.throws(
+    () => resolveConfig({ ping: { indexnow: { key: longKey } } }),
+    /indexnow\.key too long \(max 256 chars\)/
+  );
 });

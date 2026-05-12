@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runPing } from '../lib/run.mjs';
+import { runPing } from '../lib/run.js';
 import { startMockServer } from './helpers/mock-http.mjs';
 
 function fakeHexo(posts, baseDir, configOverride = {}) {
@@ -127,4 +127,154 @@ test('runPing short-circuits when ping.enabled=false', async () => {
     assert.equal(result.plan.length, 0);
     assert.equal(result.indexnowResults, null);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('runPing rejects state_file outside base_dir (path traversal)', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'hps-run-base-'));
+  const outsideDir = mkdtempSync(join(tmpdir(), 'hps-run-outside-'));
+  try {
+    const hexo = fakeHexo(
+      [{ permalink: 'https://x/a/', date: '2026-01-01' }],
+      baseDir,
+      {
+        xmlrpc: { endpoints: [] },
+        top: { state_file: join(outsideDir, 'state.json') }
+      }
+    );
+    await assert.rejects(runPing(hexo, {}), /state_file must be inside hexo\.base_dir/);
+  } finally {
+    rmSync(baseDir, { recursive: true, force: true });
+    rmSync(outsideDir, { recursive: true, force: true });
+  }
+});
+
+test('runPing rejects state_file using ../ to escape base_dir', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'hps-run-base-'));
+  try {
+    const hexo = fakeHexo(
+      [{ permalink: 'https://x/a/', date: '2026-01-01' }],
+      baseDir,
+      {
+        xmlrpc: { endpoints: [] },
+        top: { state_file: '../../../etc/state.json' }
+      }
+    );
+    await assert.rejects(runPing(hexo, {}), /state_file must be inside hexo\.base_dir/);
+  } finally { rmSync(baseDir, { recursive: true, force: true }); }
+});
+
+test('runPing does NOT commit state when every engine fails', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'hps-run-'));
+  // IndexNow returns 403 (forbidden), XML-RPC returns 503 (error).
+  const indexnow = await startMockServer(async () => ({ status: 403, body: '' }));
+  const xmlrpc = await startMockServer(async () => ({ status: 503, body: 'busy' }));
+  try {
+    const hexo = fakeHexo(
+      [{ permalink: 'https://x/a/', date: '2026-01-01' }],
+      dir,
+      {
+        indexnow: { endpoint: indexnow.url },
+        xmlrpc: { endpoints: [xmlrpc.url] }
+      }
+    );
+    const result = await runPing(hexo, {});
+    assert.equal(result.indexnowResults[0].status, 'forbidden');
+    assert.equal(result.xmlrpcResults[0].status, 'error');
+    assert.equal(
+      existsSync(join(dir, '.hexo-ping-state.json')),
+      false,
+      'state file MUST NOT be written when every engine failed'
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    await indexnow.close();
+    await xmlrpc.close();
+  }
+});
+
+test('runPing commits state when at least one engine succeeds', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'hps-run-'));
+  // IndexNow fails (403), XML-RPC succeeds (200) — partial success commits.
+  const indexnow = await startMockServer(async () => ({ status: 403, body: '' }));
+  const xmlrpc = await startMockServer(async () => ({
+    status: 200, body: '<methodResponse><params/></methodResponse>'
+  }));
+  try {
+    const hexo = fakeHexo(
+      [{ permalink: 'https://x/a/', date: '2026-01-01' }],
+      dir,
+      {
+        indexnow: { endpoint: indexnow.url },
+        xmlrpc: { endpoints: [xmlrpc.url] }
+      }
+    );
+    await runPing(hexo, {});
+    assert.equal(existsSync(join(dir, '.hexo-ping-state.json')), true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    await indexnow.close();
+    await xmlrpc.close();
+  }
+});
+
+test('runPing passes concurrency parameter to pingAll', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'hps-run-'));
+  let inFlight = 0;
+  let peak = 0;
+  const make = () => startMockServer(async () => {
+    inFlight++;
+    peak = Math.max(peak, inFlight);
+    await new Promise(r => setTimeout(r, 30));
+    inFlight--;
+    return { status: 200, body: '<methodResponse><params/></methodResponse>' };
+  });
+  const servers = await Promise.all([make(), make(), make(), make()]);
+  const indexnow = await startMockServer(async () => ({ status: 200, body: '' }));
+  try {
+    const hexo = fakeHexo(
+      [{ permalink: 'https://x/a/', date: '2026-01-01' }],
+      dir,
+      {
+        indexnow: { endpoint: indexnow.url },
+        xmlrpc: { endpoints: servers.map(s => s.url) },
+        top: { concurrency: 2 }
+      }
+    );
+    await runPing(hexo, {});
+    assert.ok(peak <= 2, `peak in-flight must be <= 2, got ${peak}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    await Promise.all(servers.map(s => s.close()));
+    await indexnow.close();
+  }
+});
+
+test('runPing rejects pseudo-http key_location like httpevil.example.com/x.txt', async () => {
+  // M1 fix: keyLocation that "starts with http" but isn't really an http URL
+  // must be treated as a path and joined to the site URL.
+  const dir = mkdtempSync(join(tmpdir(), 'hps-run-'));
+  let received;
+  const indexnow = await startMockServer(async ({ body }) => {
+    received = JSON.parse(body);
+    return { status: 200, body: '' };
+  });
+  try {
+    const hexo = fakeHexo(
+      [{ permalink: 'https://x/a/', date: '2026-01-01' }],
+      dir,
+      {
+        indexnow: {
+          endpoint: indexnow.url,
+          key_location: 'httpevil.example.com/x.txt' // looks like http but not a URL
+        },
+        xmlrpc: { endpoints: [] }
+      }
+    );
+    await runPing(hexo, {});
+    // Should have been treated as a relative path and joined to siteUrl:
+    assert.equal(received.keyLocation, 'https://einfach-aleks.comhttpevil.example.com/x.txt');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    await indexnow.close();
+  }
 });

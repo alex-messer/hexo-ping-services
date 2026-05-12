@@ -1,7 +1,8 @@
-import { runPing } from '../lib/run.mjs';
-import { resolveConfig } from '../lib/config.mjs';
+'use strict';
+const { runPing } = require('../lib/run.js');
+const { resolveConfig } = require('../lib/config.js');
 
-export function registerFilter(hexo) {
+function registerFilter(hexo) {
   hexo.extend.filter.register('after_generate', async function () {
     const cfg = resolveConfig(this.config);
     if (!cfg.enabled || !cfg.runAfterGenerate) return;
@@ -14,4 +15,4 @@ export function registerFilter(hexo) {
   });
 }
 
-export default registerFilter;
+module.exports = { registerFilter };

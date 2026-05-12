@@ -1,6 +1,7 @@
-import { runPing } from '../lib/run.mjs';
+'use strict';
+const { runPing } = require('../lib/run.js');
 
-export function parseArgs(argv) {
+function parseArgs(argv) {
   return {
     all: Boolean(argv.all),
     dryRun: Boolean(argv['dry-run']),
@@ -49,7 +50,7 @@ function logJson(result) {
   return out.join('\n');
 }
 
-export function registerConsole(hexo) {
+function registerConsole(hexo) {
   hexo.extend.console.register('ping', 'Notify IndexNow + XML-RPC update services.', {
     options: [
       { name: '--all', desc: 'Ping every indexable URL, ignoring state.' },
@@ -77,4 +78,9 @@ export function registerConsole(hexo) {
   });
 }
 
-export default registerConsole;
+module.exports = {
+  parseArgs,
+  registerConsole,
+  // Exposed for unit testing; not part of the public API.
+  _internal: { logHuman, logJson }
+};
