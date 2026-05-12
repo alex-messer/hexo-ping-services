@@ -4,6 +4,18 @@ All notable changes to `hexo-ping-services` are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-05-12
+
+### Added
+- IndexNow retries with exponential backoff on HTTP 429
+  (rate-limited). Default 3 attempts, base 250ms doubling each retry,
+  capped at 5s. Honors `Retry-After` response header (delta-seconds
+  or HTTP-date). Results now include a `retries: N` field. Other
+  non-2xx statuses (403, 422, 5xx, etc.) are NOT retried.
+
+### Coverage
+- 141 tests (+7 new). Functions 100%, lines stay ≥99.8%.
+
 ## [0.3.0] - 2026-05-12
 
 ### Added
@@ -135,6 +147,7 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - 50 unit tests on Node 22 + 24. Mock HTTP via
   `test/helpers/mock-http.mjs` (native `node:http.createServer`).
 
+[0.3.1]: https://github.com/alex-messer/hexo-ping-services/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/alex-messer/hexo-ping-services/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/alex-messer/hexo-ping-services/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/alex-messer/hexo-ping-services/compare/v0.1.1...v0.1.2

@@ -187,3 +187,141 @@ test('submitIndexNow respects timeoutMs', async () => {
     assert.equal(result[0].status, 'error');
   } finally { await server.close(); }
 });
+
+test('submitIndexNow retries on 429 up to 3 times then gives up', async () => {
+  let calls = 0;
+  const server = await startMockServer(async () => {
+    calls++;
+    return { status: 429, body: '' };
+  });
+  try {
+    const result = await submitIndexNow(
+      { endpoint: server.url, host: 'x', key: 'k', keyLocation: 'https://x/k.txt', timeoutMs: 200, retryBaseMs: 1 },
+      ['https://x/a/']
+    );
+    assert.equal(calls, 4, 'should attempt initial + 3 retries');
+    assert.equal(result[0].status, 'rate-limited');
+    assert.equal(result[0].retries, 3);
+  } finally { await server.close(); }
+});
+
+test('submitIndexNow retries on 429 then succeeds', async () => {
+  let calls = 0;
+  const server = await startMockServer(async () => {
+    calls++;
+    if (calls < 3) return { status: 429, body: '' };
+    return { status: 200, body: '' };
+  });
+  try {
+    const result = await submitIndexNow(
+      { endpoint: server.url, host: 'x', key: 'k', keyLocation: 'https://x/k.txt', timeoutMs: 200, retryBaseMs: 1 },
+      ['https://x/a/']
+    );
+    assert.equal(calls, 3);
+    assert.equal(result[0].status, 'ok');
+    assert.equal(result[0].retries, 2);
+  } finally { await server.close(); }
+});
+
+test('submitIndexNow honors Retry-After delta-seconds on 429', async () => {
+  let calls = 0;
+  let firstCallAt, secondCallAt;
+  const server = await startMockServer(async () => {
+    calls++;
+    const now = Date.now();
+    if (calls === 1) {
+      firstCallAt = now;
+      return { status: 429, headers: { 'retry-after': '1', 'content-type': 'application/json' }, body: '' };
+    }
+    secondCallAt = now;
+    return { status: 200, body: '' };
+  });
+  try {
+    const result = await submitIndexNow(
+      { endpoint: server.url, host: 'x', key: 'k', keyLocation: 'https://x/k.txt', timeoutMs: 2000, retryBaseMs: 1 },
+      ['https://x/a/']
+    );
+    assert.equal(result[0].status, 'ok');
+    const gap = secondCallAt - firstCallAt;
+    assert.ok(gap >= 900, `retry gap ${gap}ms should be >=900ms when Retry-After=1s`);
+  } finally { await server.close(); }
+});
+
+test('submitIndexNow does NOT retry on non-429 errors (e.g. 422)', async () => {
+  let calls = 0;
+  const server = await startMockServer(async () => {
+    calls++;
+    return { status: 422, body: '' };
+  });
+  try {
+    const result = await submitIndexNow(
+      { endpoint: server.url, host: 'x', key: 'k', keyLocation: 'https://x/k.txt', timeoutMs: 200, retryBaseMs: 1 },
+      ['https://x/a/']
+    );
+    assert.equal(calls, 1, '422 must not trigger retries');
+    assert.equal(result[0].status, 'invalid');
+  } finally { await server.close(); }
+});
+
+test('submitIndexNow caps Retry-After to a max to prevent stalls', async () => {
+  let calls = 0;
+  const server = await startMockServer(async () => {
+    calls++;
+    return { status: 429, headers: { 'retry-after': '999', 'content-type': 'application/json' }, body: '' };
+  });
+  try {
+    const start = Date.now();
+    const result = await submitIndexNow(
+      { endpoint: server.url, host: 'x', key: 'k', keyLocation: 'https://x/k.txt', timeoutMs: 200, retryBaseMs: 1, retryMaxBackoffMs: 50 },
+      ['https://x/a/']
+    );
+    const elapsed = Date.now() - start;
+    assert.equal(result[0].status, 'rate-limited');
+    // 3 retries x 50ms cap = at most ~200ms (plus fetch round-trip overhead).
+    assert.ok(elapsed < 1500, `elapsed ${elapsed}ms should be <<999s (cap kicked in)`);
+  } finally { await server.close(); }
+});
+
+test('submitIndexNow honors Retry-After HTTP-date on 429', async () => {
+  let calls = 0;
+  let firstCallAt, secondCallAt;
+  const server = await startMockServer(async () => {
+    calls++;
+    const now = Date.now();
+    if (calls === 1) {
+      firstCallAt = now;
+      // Target ~2s in the future. HTTP-date has 1-second resolution and
+      // toUTCString rounds down, so net wait is between ~1s and ~2s.
+      const when = new Date(now + 2000).toUTCString();
+      return { status: 429, headers: { 'retry-after': when, 'content-type': 'application/json' }, body: '' };
+    }
+    secondCallAt = now;
+    return { status: 200, body: '' };
+  });
+  try {
+    const result = await submitIndexNow(
+      { endpoint: server.url, host: 'x', key: 'k', keyLocation: 'https://x/k.txt', timeoutMs: 3000, retryBaseMs: 1, retryMaxBackoffMs: 5000 },
+      ['https://x/a/']
+    );
+    assert.equal(result[0].status, 'ok');
+    const gap = secondCallAt - firstCallAt;
+    assert.ok(gap >= 500, `retry gap ${gap}ms should reflect HTTP-date Retry-After`);
+  } finally { await server.close(); }
+});
+
+test('submitIndexNow ignores malformed Retry-After header', async () => {
+  let calls = 0;
+  const server = await startMockServer(async () => {
+    calls++;
+    if (calls < 2) return { status: 429, headers: { 'retry-after': 'not-a-date', 'content-type': 'application/json' }, body: '' };
+    return { status: 200, body: '' };
+  });
+  try {
+    const result = await submitIndexNow(
+      { endpoint: server.url, host: 'x', key: 'k', keyLocation: 'https://x/k.txt', timeoutMs: 200, retryBaseMs: 1 },
+      ['https://x/a/']
+    );
+    assert.equal(result[0].status, 'ok');
+    assert.equal(result[0].retries, 1);
+  } finally { await server.close(); }
+});
