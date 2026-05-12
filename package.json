@@ -1,0 +1,46 @@
+{
+  "name": "hexo-ping-services",
+  "version": "0.1.0",
+  "description": "Notify IndexNow and XML-RPC update services on Hexo publish/update.",
+  "license": "MIT",
+  "author": "alex-messer <alex@messer.pw>",
+  "type": "module",
+  "main": "./index.js",
+  "files": [
+    "index.js",
+    "lib/",
+    "scripts/",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:coverage": "c8 --reporter=text --reporter=lcov node --test test/*.test.mjs"
+  },
+  "peerDependencies": {
+    "hexo": "^7.0.0 || ^8.0.0"
+  },
+  "devDependencies": {
+    "c8": "^10.1.0"
+  },
+  "keywords": [
+    "hexo",
+    "hexo-plugin",
+    "indexnow",
+    "xml-rpc",
+    "weblogupdates",
+    "ping",
+    "seo"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alex-messer/hexo-ping-services.git"
+  },
+  "bugs": {
+    "url": "https://github.com/alex-messer/hexo-ping-services/issues"
+  },
+  "homepage": "https://github.com/alex-messer/hexo-ping-services#readme"
+}

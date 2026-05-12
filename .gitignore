@@ -1,0 +1,6 @@
+node_modules/
+coverage/
+.hexo-ping-state.json
+test-results.xml
+*.log
+.DS_Store
