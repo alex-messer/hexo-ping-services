@@ -2,8 +2,10 @@ import { createServer } from 'node:http';
 
 // Mock servers always bind to 127.0.0.1, which the SSRF guard rejects. Tests
 // that use this helper get the loopback exemption automatically. Production
-// code never sets this flag.
+// code never sets this flag. The url-guard also requires NODE_ENV=test for
+// the bypass to be honored — both must be set.
 process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS = '1';
+if (process.env.NODE_ENV !== 'test') process.env.NODE_ENV = 'test';
 
 export function startMockServer(handler) {
   return new Promise((resolve) => {

@@ -7,7 +7,7 @@ import consoleModule from '../scripts/console.js';
 import { registerConsole } from '../scripts/console.js';
 import { startMockServer } from './helpers/mock-http.mjs';
 
-const { logHuman, logJson } = consoleModule._internal;
+const { logHuman, logJson, sanitize } = consoleModule._internal;
 
 function tmpDir(prefix) {
   const d = mkdtempSync(join(tmpdir(), prefix));
@@ -68,6 +68,104 @@ test('logHuman: includes fault attribute when xmlrpc fault present', () => {
   assert.match(out, /xmlrpc https:\/\/rpc\/: fault fault="spam"/);
 });
 
+test('sanitize replaces ANSI escapes and control bytes with ?', () => {
+  // Bytes: ESC 0x1b, BEL 0x07, CR 0x0d, DEL 0x7f, NUL 0x00.
+  const raw = '\x1b[31mRED\x07\x0d\x7f\x00';
+  const out = sanitize(raw);
+  assert.equal(out, '?[31mRED????');
+});
+
+test('logHuman strips raw escape bytes from xmlrpc fault', () => {
+  const fault = '\x1b[31mInjected\x1b[0m';
+  const out = logHuman({
+    plan: ['https://x/'],
+    indexnowResults: null,
+    xmlrpcResults: [{
+      endpoint: 'https://rpc/',
+      status: 'fault',
+      httpStatus: 200,
+      durationMs: 5,
+      fault
+    }]
+  });
+  assert.equal(out.includes('\x1b'), false, 'output must not contain ESC bytes');
+  assert.match(out, /fault="\?\[31mInjected\?\[0m"/);
+});
+
+test('sanitize handles null/undefined safely', () => {
+  assert.equal(sanitize(null), '');
+  assert.equal(sanitize(undefined), '');
+});
+
+test('sanitize strips 8-bit CSI (C1 control 0x9b) — MED-03 extended', () => {
+  const raw = 'before\x9b31mAFTER';
+  const out = sanitize(raw);
+  assert.equal(out.includes('\x9b'), false, '8-bit CSI byte must be stripped');
+  assert.equal(out, 'before?31mAFTER');
+});
+
+test('sanitize strips full C1 control range (0x80-0x9f) — MED-03 extended', () => {
+  for (let code = 0x80; code <= 0x9f; code++) {
+    const ch = String.fromCharCode(code);
+    const out = sanitize('a' + ch + 'b');
+    assert.equal(out, 'a?b', `code point 0x${code.toString(16)} must be stripped`);
+  }
+});
+
+test('sanitize strips RTL override U+202E (bidi spoofing) — MED-03 extended', () => {
+  const raw = 'hello‮dlrow';
+  const out = sanitize(raw);
+  assert.equal(out.includes('‮'), false, 'RTL override must be stripped');
+  assert.equal(out, 'hello?dlrow');
+});
+
+test('sanitize strips bidi formatting U+202A through U+202E — MED-03 extended', () => {
+  for (let code = 0x202A; code <= 0x202E; code++) {
+    const ch = String.fromCharCode(code);
+    const out = sanitize('x' + ch + 'y');
+    assert.equal(out, 'x?y', `code point U+${code.toString(16).toUpperCase()} must be stripped`);
+  }
+});
+
+test('sanitize strips isolate format U+2066 (LRI) — MED-03 extended', () => {
+  const raw = 'a⁦b';
+  assert.equal(sanitize(raw), 'a?b');
+});
+
+test('sanitize strips bidi isolates U+2066 through U+2069 — MED-03 extended', () => {
+  for (let code = 0x2066; code <= 0x2069; code++) {
+    const ch = String.fromCharCode(code);
+    const out = sanitize('x' + ch + 'y');
+    assert.equal(out, 'x?y', `code point U+${code.toString(16).toUpperCase()} must be stripped`);
+  }
+});
+
+test('sanitize preserves chars adjacent to bidi range boundaries — MED-03 extended', () => {
+  assert.equal(sanitize('a b'), 'a b', 'U+2029 just below 202A must not be stripped');
+  assert.equal(sanitize('a b'), 'a b', 'U+202F just above 202E must not be stripped');
+  assert.equal(sanitize('a⁥b'), 'a⁥b', 'U+2065 just below 2066 must not be stripped');
+  assert.equal(sanitize('a⁪b'), 'a⁪b', 'U+206A just above 2069 must not be stripped');
+});
+
+test('logHuman strips 8-bit CSI and RTL override from xmlrpc fault — MED-03 extended', () => {
+  const fault = 'a\x9b31mb‮c⁦d';
+  const out = logHuman({
+    plan: ['https://x/'],
+    indexnowResults: null,
+    xmlrpcResults: [{
+      endpoint: 'https://rpc/',
+      status: 'fault',
+      httpStatus: 200,
+      durationMs: 5,
+      fault
+    }]
+  });
+  assert.equal(out.includes('\x9b'), false, 'output must not contain CSI 0x9b');
+  assert.equal(out.includes('‮'), false, 'output must not contain RTL override');
+  assert.equal(out.includes('⁦'), false, 'output must not contain LRI');
+  assert.match(out, /fault="a\?31mb\?c\?d"/);
+});
+
 test('logJson: emits one JSON line per engine result with level', () => {
   const out = logJson({
     plan: ['https://x/a/'],
@@ -118,6 +216,54 @@ test('logJson: emits websub engine lines with level', () => {
   const j1 = JSON.parse(lines[1]);
   assert.equal(j1.engine, 'websub');
   assert.equal(j1.level, 'warn');
+});
+
+test('logJson strips 8-bit CSI from xmlrpc fault — MED-03 round 3', () => {
+  const out = logJson({
+    plan: ['https://x/a/'],
+    xmlrpcResults: [{ endpoint: 'https://rpc/', status: 'fault', httpStatus: 200, durationMs: 5, fault: 'a\x9b31mb' }]
+  });
+  assert.equal(out.includes('\x9b'), false, 'serialized output must not contain raw 8-bit CSI byte');
+  const j = JSON.parse(out);
+  assert.equal(j.fault, 'a?31mb');
+});
+
+test('logJson strips RTL override from xmlrpc fault — MED-03 round 3', () => {
+  const out = logJson({
+    plan: ['https://x/a/'],
+    xmlrpcResults: [{ endpoint: 'https://rpc/', status: 'fault', httpStatus: 200, durationMs: 5, fault: 'safe‮flip' }]
+  });
+  assert.equal(out.includes('‮'), false, 'serialized output must not contain RTL override');
+  assert.equal(JSON.parse(out).fault, 'safe?flip');
+});
+
+test('logJson strips LRI from indexnow error — MED-03 round 3', () => {
+  const out = logJson({
+    plan: ['https://x/a/'],
+    indexnowResults: [{ batch: 0, urls: 1, status: 'error', httpStatus: 0, durationMs: 3, error: 'net⁦fail' }]
+  });
+  assert.equal(out.includes('⁦'), false, 'serialized output must not contain LRI');
+  assert.equal(JSON.parse(out).error, 'net?fail');
+});
+
+test('logJson leaves a safe fault string intact — MED-03 round 3', () => {
+  const out = logJson({
+    plan: ['https://x/a/'],
+    xmlrpcResults: [{ endpoint: 'https://rpc/', status: 'fault', httpStatus: 200, durationMs: 5, fault: 'rejected: spam detected (code 42)' }]
+  });
+  assert.equal(JSON.parse(out).fault, 'rejected: spam detected (code 42)');
+});
+
+test('logJson keeps numeric fields as numbers — MED-03 round 3', () => {
+  const out = logJson({
+    plan: ['https://x/a/'],
+    xmlrpcResults: [{ endpoint: 'https://rpc/', status: 'fault', httpStatus: 200, durationMs: 5, fault: 'spam' }]
+  });
+  const j = JSON.parse(out);
+  assert.equal(typeof j.httpStatus, 'number');
+  assert.equal(typeof j.durationMs, 'number');
+  assert.equal(j.httpStatus, 200);
+  assert.equal(j.durationMs, 5);
 });
 
 // End-to-end tests against the registered handler ---------------------------

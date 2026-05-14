@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPingPayload, pingEndpoint, pingAll } from '../lib/xmlrpc.js';
+import xmlrpcMod, { buildPingPayload, pingEndpoint, pingAll } from '../lib/xmlrpc.js';
+const { _internal: XMLRPC_INTERNAL } = xmlrpcMod;
 import { startMockServer } from './helpers/mock-http.mjs';
 
 test('buildPingPayload emits weblogUpdates.ping with 2 string params', () => {
@@ -114,6 +115,72 @@ test('pingAll caps parallelism via concurrency parameter', async () => {
     assert.ok(peak <= 2, `peak in-flight must be <= 2, got ${peak}`);
   } finally {
     await Promise.all(servers.map(s => s.close()));
+  }
+});
+
+test('pingEndpoint caps response body at 64 KiB without OOM', async () => {
+  const big = '<x>' + 'a'.repeat(1024 * 1024) + '</x>';
+  const server = await startMockServer(async () => ({
+    status: 200,
+    headers: { 'content-type': 'text/xml' },
+    body: big
+  }));
+  try {
+    const memBefore = process.memoryUsage().heapUsed;
+    const r = await pingEndpoint(server.url, '<?xml ?><dummy/>', { timeoutMs: 2000 });
+    const memAfter = process.memoryUsage().heapUsed;
+    // Truncation yields a sentinel with no <fault>, so status stays 'ok'.
+    assert.equal(r.status, 'ok');
+    assert.equal(r.fault, undefined);
+    // Loose bound: heap growth varies by V8 GC timing, we just confirm the whole 1 MiB didn't buffer.
+    const growth = memAfter - memBefore;
+    assert.ok(growth < 8 * 1024 * 1024, `heap growth ${growth} should be << 1 MiB body`);
+  } finally { await server.close(); }
+});
+
+test('pingEndpoint with truncated response does not see <fault>', async () => {
+  // Body deliberately starts with <methodResponse> and exceeds the cap, so the
+  // reader aborts before any <fault> substring could land downstream.
+  const huge = '<methodResponse>' + 'b'.repeat(200 * 1024) + '</methodResponse>';
+  const server = await startMockServer(async () => ({
+    status: 200,
+    headers: { 'content-type': 'text/xml' },
+    body: huge
+  }));
+  try {
+    const r = await pingEndpoint(server.url, '<?xml ?><dummy/>', { timeoutMs: 2000 });
+    assert.equal(r.status, 'ok');
+    assert.equal(r.fault, undefined);
+  } finally { await server.close(); }
+});
+
+test('readBodyCapped returns full body when under cap', async () => {
+  const small = '<methodResponse><params/></methodResponse>';
+  const resp = new Response(small);
+  const body = await XMLRPC_INTERNAL.readBodyCapped(resp, 64 * 1024);
+  assert.equal(body, small);
+});
+
+test('readBodyCapped returns sentinel when body exceeds cap', async () => {
+  const big = 'x'.repeat(100 * 1024);
+  const resp = new Response(big);
+  const body = await XMLRPC_INTERNAL.readBodyCapped(resp, 64 * 1024);
+  assert.equal(body, XMLRPC_INTERNAL.TRUNCATED_SENTINEL);
+});
+
+test('pingEndpoint blocks endpoint whose DNS resolves to private IP (MED-01 wired)', async () => {
+  const prev = process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS;
+  delete process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS;
+  const dnsMod = await import('node:dns');
+  const orig = dnsMod.promises.lookup;
+  dnsMod.promises.lookup = async () => [{ address: '169.254.169.254', family: 4 }];
+  try {
+    const r = await pingEndpoint('https://attacker.example.com/rpc', '<dummy/>', { timeoutMs: 1000 });
+    assert.equal(r.status, 'blocked');
+    assert.match(r.error, /resolves to private\/loopback address/);
+  } finally {
+    dnsMod.promises.lookup = orig;
+    if (prev !== undefined) process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS = prev;
   }
 });
 

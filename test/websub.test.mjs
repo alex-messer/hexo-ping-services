@@ -109,3 +109,19 @@ test('publishToHubs returns empty when no hubs configured', async () => {
   const r = await publishToHubs([], 'https://x/feed', { timeoutMs: 1000 });
   assert.deepEqual(r, []);
 });
+
+test('publishToHub blocks hub whose DNS resolves to private IP (MED-01 wired)', async () => {
+  const prev = process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS;
+  delete process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS;
+  const dnsMod = await import('node:dns');
+  const orig = dnsMod.promises.lookup;
+  dnsMod.promises.lookup = async () => [{ address: '10.0.0.1', family: 4 }];
+  try {
+    const r = await publishToHub('https://attacker.example.com/hub', 'https://x/feed', { timeoutMs: 1000 });
+    assert.equal(r.status, 'blocked');
+    assert.match(r.error, /resolves to private\/loopback address/);
+  } finally {
+    dnsMod.promises.lookup = orig;
+    if (prev !== undefined) process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS = prev;
+  }
+});

@@ -18,9 +18,26 @@ this package fills that gap.
 
 ## Install
 
+This plugin is not published to the npm registry. Install it from a pinned
+GitHub tag instead:
+
 ```sh
-pnpm add -D hexo-ping-services
-# or: npm install --save-dev hexo-ping-services
+pnpm add -D "git+https://github.com/alex-messer/hexo-ping-services.git#v0.3.1"
+# or: npm install --save-dev "git+https://github.com/alex-messer/hexo-ping-services.git#v0.3.1"
+```
+
+If your CI blocks `git+https://`, fall back to the release tarball:
+
+```sh
+pnpm add -D "https://github.com/alex-messer/hexo-ping-services/archive/refs/tags/v0.3.1.tar.gz"
+```
+
+Requirements: Node `>=22`, Hexo `^7 || ^8` (peer-dep, supplied by your site).
+
+Verify:
+
+```sh
+npx hexo ping --dry-run
 ```
 
 ## Configure
@@ -49,6 +66,7 @@ ping:
     feed_url: /atom.xml         # absolute or relative-to-site URL
   state_file: .hexo-ping-state.json
   timeout_ms: 5000
+  validate_dns: true            # resolve outbound hostnames and reject DNS rebinding to private IPs; set false to skip (~10 ms per unique host)
 ```
 
 Then create the IndexNow key file: place a single line containing the same key
