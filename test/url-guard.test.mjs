@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isPrivateHost, assertPublicHttpUrl } from '../lib/url-guard.js';
+import urlGuard from '../lib/url-guard.js';
+const { isPrivateHost, assertPublicHttpUrl, _internal } = urlGuard;
 
 // Ensure the test-only escape hatch from the mock helper is OFF for this suite.
 delete process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS;
@@ -94,12 +95,200 @@ test('assertPublicHttpUrl: public URL passes and returns parsed URL', () => {
   assert.equal(u.protocol, 'https:');
 });
 
-test('assertPublicHttpUrl: env-var escape hatch permits loopback', () => {
+test('assertPublicHttpUrl: env-var escape hatch permits loopback when NODE_ENV=test', () => {
+  const prevAllow = process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS;
+  const prevNodeEnv = process.env.NODE_ENV;
   process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS = '1';
+  process.env.NODE_ENV = 'test';
   try {
     const u = assertPublicHttpUrl('http://127.0.0.1:1234/ping');
     assert.equal(u.hostname, '127.0.0.1');
   } finally {
-    delete process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS;
+    if (prevAllow === undefined) delete process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS;
+    else process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS = prevAllow;
+    if (prevNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prevNodeEnv;
   }
+});
+
+test('isPrivateHost: ::ffff:169.254.169.254 (IMDS via IPv4-mapped IPv6)', () => {
+  assert.equal(isPrivateHost('::ffff:169.254.169.254'), true);
+  assert.equal(isPrivateHost('[::ffff:169.254.169.254]'), true);
+});
+
+test('isPrivateHost: ::ffff:7f00:1 (loopback via packed-hex form)', () => {
+  // 7f00:0001 == 127.0.0.1
+  assert.equal(isPrivateHost('::ffff:7f00:1'), true);
+  assert.equal(isPrivateHost('[::ffff:7f00:1]'), true);
+});
+
+test('isPrivateHost: ::ffff:a00:1 (10.0.0.1 via packed-hex)', () => {
+  // 0a00:0001 == 10.0.0.1
+  assert.equal(isPrivateHost('::ffff:a00:1'), true);
+  assert.equal(isPrivateHost('[::ffff:a00:1]'), true);
+});
+
+test('isPrivateHost: ::ffff:c0a8:101 (192.168.1.1 via packed-hex)', () => {
+  // c0a8:0101 == 192.168.1.1
+  assert.equal(isPrivateHost('::ffff:c0a8:101'), true);
+  assert.equal(isPrivateHost('[::ffff:c0a8:101]'), true);
+});
+
+test('isPrivateHost: ::ffff:a9fe:a9fe (169.254.169.254 packed-hex IMDS)', () => {
+  // a9fe:a9fe == 169.254.169.254
+  assert.equal(isPrivateHost('::ffff:a9fe:a9fe'), true);
+  assert.equal(isPrivateHost('[::ffff:a9fe:a9fe]'), true);
+});
+
+test('assertPublicHttpUrl rejects IPv4-mapped IPv6 URLs', () => {
+  const cases = [
+    'http://[::ffff:169.254.169.254]/latest/meta-data/',
+    'http://[::ffff:7f00:1]/',
+    'http://[::ffff:a00:1]/',
+    'http://[::ffff:c0a8:101]/',
+    'http://[::ffff:a9fe:a9fe]/'
+  ];
+  for (const c of cases) {
+    assert.throws(
+      () => assertPublicHttpUrl(c),
+      /refusing private\/loopback host/,
+      `must reject ${c}`
+    );
+  }
+});
+
+test('unwrapIpv4MappedIpv6 returns dotted-quad for valid forms', () => {
+  const f = _internal.unwrapIpv4MappedIpv6;
+  assert.equal(f('::ffff:169.254.169.254'), '169.254.169.254');
+  assert.equal(f('[::ffff:169.254.169.254]'), '169.254.169.254');
+  assert.equal(f('::ffff:7f00:1'), '127.0.0.1');
+  assert.equal(f('::ffff:a9fe:a9fe'), '169.254.169.254');
+  assert.equal(f('::ffff:a00:1'), '10.0.0.1');
+  assert.equal(f('::ffff:c0a8:101'), '192.168.1.1');
+});
+
+test('unwrapIpv4MappedIpv6 returns null for non-mapped IPv6', () => {
+  const f = _internal.unwrapIpv4MappedIpv6;
+  assert.equal(f('::1'), null);
+  assert.equal(f('2606:4700::1111'), null);
+  assert.equal(f('fe80::abc'), null);
+  assert.equal(f('api.indexnow.org'), null);
+});
+
+test('bypass IGNORED when NODE_ENV is not test, warning to stderr', () => {
+  _internal._resetBypassWarned();
+  const prevAllow = process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS;
+  const prevNodeEnv = process.env.NODE_ENV;
+  process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS = '1';
+  process.env.NODE_ENV = 'production';
+  const captured = [];
+  const orig = process.stderr.write.bind(process.stderr);
+  process.stderr.write = (s) => { captured.push(String(s)); return true; };
+  try {
+    assert.throws(
+      () => assertPublicHttpUrl('http://127.0.0.1:1234/ping'),
+      /refusing private\/loopback host/
+    );
+  } finally {
+    process.stderr.write = orig;
+    if (prevAllow === undefined) delete process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS;
+    else process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS = prevAllow;
+    if (prevNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prevNodeEnv;
+    _internal._resetBypassWarned();
+  }
+  assert.match(captured.join(''), /HEXO_PING_ALLOW_PRIVATE_HOSTS is set but NODE_ENV is not/);
+});
+
+test('bypass warning is emitted at most once per process', () => {
+  _internal._resetBypassWarned();
+  const prevAllow = process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS;
+  const prevNodeEnv = process.env.NODE_ENV;
+  process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS = '1';
+  process.env.NODE_ENV = 'production';
+  const captured = [];
+  const orig = process.stderr.write.bind(process.stderr);
+  process.stderr.write = (s) => { captured.push(String(s)); return true; };
+  try {
+    for (let i = 0; i < 5; i++) {
+      try { assertPublicHttpUrl('http://127.0.0.1/'); } catch { /* expected */ }
+    }
+  } finally {
+    process.stderr.write = orig;
+    if (prevAllow === undefined) delete process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS;
+    else process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS = prevAllow;
+    if (prevNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prevNodeEnv;
+    _internal._resetBypassWarned();
+  }
+  const matches = captured.join('').match(/HEXO_PING_ALLOW_PRIVATE_HOSTS is set but NODE_ENV is not/g) || [];
+  assert.equal(matches.length, 1, 'warning must be one-shot per process');
+});
+
+test('resolveDns:true rejects hostname whose DNS resolves to private IP (DNS rebinding)', async () => {
+  const dnsMod = await import('node:dns');
+  const orig = dnsMod.promises.lookup;
+  dnsMod.promises.lookup = async () => [{ address: '10.0.0.1', family: 4 }];
+  try {
+    await assert.rejects(
+      assertPublicHttpUrl('https://attacker.example.com/', { resolveDns: true }),
+      /resolves to private\/loopback address/
+    );
+  } finally {
+    dnsMod.promises.lookup = orig;
+  }
+});
+
+test('resolveDns:true allows public DNS resolution', async () => {
+  const dnsMod = await import('node:dns');
+  const orig = dnsMod.promises.lookup;
+  dnsMod.promises.lookup = async () => [
+    { address: '93.184.216.34', family: 4 },
+    { address: '2606:2800:220:1:248:1893:25c8:1946', family: 6 }
+  ];
+  try {
+    const u = await assertPublicHttpUrl('https://example.com/', { resolveDns: true });
+    assert.equal(u.hostname, 'example.com');
+  } finally {
+    dnsMod.promises.lookup = orig;
+  }
+});
+
+test('resolveDns:true rejects when ANY resolved address (multi-A record) is private', async () => {
+  const dnsMod = await import('node:dns');
+  const orig = dnsMod.promises.lookup;
+  dnsMod.promises.lookup = async () => [
+    { address: '93.184.216.34', family: 4 },
+    { address: '192.168.1.1', family: 4 }
+  ];
+  try {
+    await assert.rejects(
+      assertPublicHttpUrl('https://example.com/', { resolveDns: true }),
+      /resolves to private\/loopback address/
+    );
+  } finally {
+    dnsMod.promises.lookup = orig;
+  }
+});
+
+test('resolveDns:true rejects ENOTFOUND', async () => {
+  const dnsMod = await import('node:dns');
+  const orig = dnsMod.promises.lookup;
+  const err = new Error('getaddrinfo ENOTFOUND nope.invalid');
+  err.code = 'ENOTFOUND';
+  dnsMod.promises.lookup = async () => { throw err; };
+  try {
+    await assert.rejects(
+      assertPublicHttpUrl('https://nope.invalid/', { resolveDns: true }),
+      /fails DNS resolution/
+    );
+  } finally {
+    dnsMod.promises.lookup = orig;
+  }
+});
+
+test('default behavior (no resolveDns) still returns parsed URL synchronously', () => {
+  const u = assertPublicHttpUrl('https://api.indexnow.org/IndexNow');
+  assert.equal(u.hostname, 'api.indexnow.org');
+  assert.equal(typeof u.then, 'undefined');
 });

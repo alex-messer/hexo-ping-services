@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { submitIndexNow } from '../lib/indexnow.js';
+import indexnowMod, { submitIndexNow } from '../lib/indexnow.js';
+const { _internal: { parseRetryAfter, RETRY_AFTER_MAX_MS } } = indexnowMod;
 import { startMockServer } from './helpers/mock-http.mjs';
 
 function captureStderr(fn) {
@@ -309,6 +310,37 @@ test('submitIndexNow honors Retry-After HTTP-date on 429', async () => {
   } finally { await server.close(); }
 });
 
+test('parseRetryAfter clamps year-9999 HTTP-date to ceiling', () => {
+  const yr9999 = 'Fri, 31 Dec 9999 23:59:59 GMT';
+  const ms = parseRetryAfter(yr9999);
+  assert.equal(typeof ms, 'number');
+  assert.ok(ms <= RETRY_AFTER_MAX_MS, `result ${ms} must be <= ${RETRY_AFTER_MAX_MS}`);
+  assert.ok(ms >= 0);
+});
+
+test('parseRetryAfter returns 0 for past HTTP-date', () => {
+  const past = 'Mon, 01 Jan 1990 00:00:00 GMT';
+  const ms = parseRetryAfter(past);
+  assert.equal(ms, 0);
+});
+
+test('parseRetryAfter clamps huge delta-seconds value', () => {
+  const ms = parseRetryAfter(String(365 * 24 * 60 * 60));
+  assert.equal(ms, RETRY_AFTER_MAX_MS);
+});
+
+test('parseRetryAfter returns null for malformed input', () => {
+  assert.equal(parseRetryAfter('not-a-date'), null);
+  assert.equal(parseRetryAfter(''), null);
+  assert.equal(parseRetryAfter(null), null);
+  assert.equal(parseRetryAfter(undefined), null);
+});
+
+test('parseRetryAfter accepts small valid delta-seconds', () => {
+  assert.equal(parseRetryAfter('5'), 5000);
+  assert.equal(parseRetryAfter('0'), 0);
+});
+
 test('submitIndexNow ignores malformed Retry-After header', async () => {
   let calls = 0;
   const server = await startMockServer(async () => {
@@ -324,4 +356,48 @@ test('submitIndexNow ignores malformed Retry-After header', async () => {
     assert.equal(result[0].status, 'ok');
     assert.equal(result[0].retries, 1);
   } finally { await server.close(); }
+});
+
+test('submitIndexNow blocks endpoint whose DNS resolves to private IP (MED-01 wired)', async () => {
+  const prev = process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS;
+  delete process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS;
+  const dnsMod = await import('node:dns');
+  const orig = dnsMod.promises.lookup;
+  dnsMod.promises.lookup = async () => [{ address: '127.0.0.1', family: 4 }];
+  try {
+    const result = await submitIndexNow(
+      { endpoint: 'https://attacker.example.com/IndexNow', host: 'x', key: 'k', keyLocation: 'https://x/k.txt' },
+      ['https://x/a/']
+    );
+    assert.equal(result[0].status, 'blocked');
+    assert.match(result[0].error, /resolves to private\/loopback address/);
+  } finally {
+    dnsMod.promises.lookup = orig;
+    if (prev !== undefined) process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS = prev;
+  }
+});
+
+test('submitIndexNow with validateDns:false skips DNS resolution (MED-01 escape hatch)', async () => {
+  const prev = process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS;
+  delete process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS;
+  const dnsMod = await import('node:dns');
+  const orig = dnsMod.promises.lookup;
+  let lookupCalls = 0;
+  dnsMod.promises.lookup = async () => { lookupCalls++; return [{ address: '127.0.0.1', family: 4 }]; };
+  const server = await startMockServer(async () => ({ status: 200, body: '' }));
+  process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS = '1';
+  process.env.NODE_ENV = 'test';
+  try {
+    const result = await submitIndexNow(
+      { endpoint: server.url, host: 'x', key: 'k', keyLocation: 'https://x/k.txt', validateDns: false },
+      ['https://x/a/']
+    );
+    assert.equal(result[0].status, 'ok');
+    assert.equal(lookupCalls, 0, 'DNS lookup must not be invoked when validateDns=false');
+  } finally {
+    await server.close();
+    dnsMod.promises.lookup = orig;
+    if (prev !== undefined) process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS = prev;
+    else delete process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS;
+  }
 });

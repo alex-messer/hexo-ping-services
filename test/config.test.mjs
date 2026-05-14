@@ -118,3 +118,40 @@ test('resolveConfig caps websub.feed_url length at 2048 chars', () => {
     /websub\.feed_url too long \(max 2048 chars\)/
   );
 });
+
+test('__proto__ key in user config does not pollute Object.prototype', () => {
+  // JSON.parse preserves __proto__ as an own enumerable string key; object literals don't.
+  const raw = JSON.parse('{"ping":{"indexnow":{"enabled":false},"__proto__":{"polluted":true}}}');
+  resolveConfig(raw);
+  assert.equal(({}).polluted, undefined);
+  const merged = resolveConfig(raw);
+  assert.equal(Object.prototype.hasOwnProperty.call(merged, 'polluted'), false);
+});
+
+test('constructor/prototype keys are also skipped during merge', () => {
+  const raw = JSON.parse('{"ping":{"indexnow":{"enabled":false},"constructor":{"x":1},"prototype":{"y":2}}}');
+  const merged = resolveConfig(raw);
+  assert.equal(merged.constructor.name, 'Object', 'constructor should remain the natural one');
+  assert.equal(Object.prototype.hasOwnProperty.call(merged, 'prototype'), false);
+});
+
+test('__proto__ nested deeper in user config also blocked', () => {
+  const raw = JSON.parse('{"ping":{"indexnow":{"enabled":false,"__proto__":{"polluted":true}}}}');
+  resolveConfig(raw);
+  assert.equal(({}).polluted, undefined);
+});
+
+test('resolveConfig defaults validate_dns to true', () => {
+  const c = resolveConfig({});
+  assert.equal(c.validateDns, true);
+});
+
+test('resolveConfig respects validate_dns: false escape hatch', () => {
+  const c = resolveConfig({ ping: { indexnow: { enabled: false }, validate_dns: false } });
+  assert.equal(c.validateDns, false);
+});
+
+test('resolveConfig validate_dns: true is honored explicitly', () => {
+  const c = resolveConfig({ ping: { indexnow: { enabled: false }, validate_dns: true } });
+  assert.equal(c.validateDns, true);
+});

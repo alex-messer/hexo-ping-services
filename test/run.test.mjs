@@ -141,7 +141,7 @@ test('runPing rejects state_file outside base_dir (path traversal)', async () =>
         top: { state_file: join(outsideDir, 'state.json') }
       }
     );
-    await assert.rejects(runPing(hexo, {}), /state_file must be inside hexo\.base_dir/);
+    await assert.rejects(runPing(hexo, {}), /ping\.state_file .* must be inside hexo\.base_dir/);
   } finally {
     rmSync(baseDir, { recursive: true, force: true });
     rmSync(outsideDir, { recursive: true, force: true });
@@ -159,7 +159,86 @@ test('runPing rejects state_file using ../ to escape base_dir', async () => {
         top: { state_file: '../../../etc/state.json' }
       }
     );
-    await assert.rejects(runPing(hexo, {}), /state_file must be inside hexo\.base_dir/);
+    await assert.rejects(runPing(hexo, {}), /ping\.state_file .* must be inside hexo\.base_dir/);
+  } finally { rmSync(baseDir, { recursive: true, force: true }); }
+});
+
+test('state_file rejection error does not leak absolute paths', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'hps-run-leak-'));
+  try {
+    const hexo = fakeHexo(
+      [{ permalink: 'https://x/a/', date: '2026-01-01' }],
+      baseDir,
+      {
+        xmlrpc: { endpoints: [] },
+        top: { state_file: '../../../etc/state.json' }
+      }
+    );
+    let caught;
+    try { await runPing(hexo, {}); } catch (e) { caught = e; }
+    assert.ok(caught, 'must reject');
+    assert.doesNotMatch(caught.message, /\/home\//);
+    assert.doesNotMatch(caught.message, /\/Users\//);
+    assert.doesNotMatch(caught.message, /C:\\/);
+    assert.doesNotMatch(caught.message, /\/tmp\//);
+    assert.ok(caught.absolutePaths, 'absolutePaths must be set for debug logging');
+    assert.ok(caught.absolutePaths.stateAbs);
+    assert.ok(caught.absolutePaths.baseAbs);
+  } finally { rmSync(baseDir, { recursive: true, force: true }); }
+});
+
+async function withGuardEnabled(fn) {
+  const prev = process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS;
+  delete process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS;
+  try { return await fn(); }
+  finally { if (prev !== undefined) process.env.HEXO_PING_ALLOW_PRIVATE_HOSTS = prev; }
+}
+
+test('runPing rejects file:/// site URL when composing keyLocation', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'hps-run-file-'));
+  try {
+    const hexo = fakeHexo(
+      [{ permalink: 'https://x/a/', date: '2026-01-01' }],
+      baseDir,
+      { xmlrpc: { endpoints: [] } }
+    );
+    hexo.config.url = 'file:///etc/';
+    await withGuardEnabled(() => assert.rejects(
+      runPing(hexo, {}),
+      /composed .* (only http\(s\) URLs allowed|invalid URL)/
+    ));
+  } finally { rmSync(baseDir, { recursive: true, force: true }); }
+});
+
+test('runPing rejects IMDS site URL (169.254.169.254)', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'hps-run-imds-'));
+  try {
+    const hexo = fakeHexo(
+      [{ permalink: 'https://x/a/', date: '2026-01-01' }],
+      baseDir,
+      { xmlrpc: { endpoints: [] } }
+    );
+    hexo.config.url = 'http://169.254.169.254/';
+    await withGuardEnabled(() => assert.rejects(
+      runPing(hexo, {}),
+      /composed .* refusing private\/loopback host/
+    ));
+  } finally { rmSync(baseDir, { recursive: true, force: true }); }
+});
+
+test('runPing rejects IPv4-mapped IPv6 IMDS site URL', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'hps-run-imds6-'));
+  try {
+    const hexo = fakeHexo(
+      [{ permalink: 'https://x/a/', date: '2026-01-01' }],
+      baseDir,
+      { xmlrpc: { endpoints: [] } }
+    );
+    hexo.config.url = 'http://[::ffff:169.254.169.254]/';
+    await withGuardEnabled(() => assert.rejects(
+      runPing(hexo, {}),
+      /composed .* refusing private\/loopback host/
+    ));
   } finally { rmSync(baseDir, { recursive: true, force: true }); }
 });
 

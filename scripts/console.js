@@ -1,6 +1,12 @@
 'use strict';
 const { runPing } = require('../lib/run.js');
 
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHAR_RE = /[\x00-\x1f\x7f-\x9f‪-‮⁦-⁩]/g;
+function sanitize(s) {
+  return String(s == null ? '' : s).replace(CONTROL_CHAR_RE, '?');
+}
+
 function parseArgs(argv) {
   return {
     all: Boolean(argv.all),
@@ -28,7 +34,7 @@ function logHuman(result) {
   }
   if (result.xmlrpcResults) {
     for (const r of result.xmlrpcResults) {
-      const fault = r.fault ? ` fault="${r.fault}"` : '';
+      const fault = r.fault ? ` fault="${sanitize(r.fault)}"` : '';
       lines.push(`  xmlrpc ${r.endpoint}: ${r.status}${fault} (HTTP ${r.httpStatus}, ${r.durationMs}ms)`);
     }
   }
@@ -40,21 +46,30 @@ function logHuman(result) {
   return lines.join('\n');
 }
 
+function sanitizeStringFields(r) {
+  const copy = {};
+  for (const k of Object.keys(r)) {
+    const v = r[k];
+    copy[k] = typeof v === 'string' ? sanitize(v) : v;
+  }
+  return copy;
+}
+
 function logJson(result) {
   const out = [];
   if (result.indexnowResults) {
     for (const r of result.indexnowResults) {
-      out.push(JSON.stringify({ level: r.status === 'ok' ? 'info' : 'warn', engine: 'indexnow', ...r }));
+      out.push(JSON.stringify({ level: r.status === 'ok' ? 'info' : 'warn', engine: 'indexnow', ...sanitizeStringFields(r) }));
     }
   }
   if (result.xmlrpcResults) {
     for (const r of result.xmlrpcResults) {
-      out.push(JSON.stringify({ level: r.status === 'ok' ? 'info' : 'warn', engine: 'xmlrpc', ...r }));
+      out.push(JSON.stringify({ level: r.status === 'ok' ? 'info' : 'warn', engine: 'xmlrpc', ...sanitizeStringFields(r) }));
     }
   }
   if (result.websubResults) {
     for (const r of result.websubResults) {
-      out.push(JSON.stringify({ level: r.status === 'ok' ? 'info' : 'warn', engine: 'websub', ...r }));
+      out.push(JSON.stringify({ level: r.status === 'ok' ? 'info' : 'warn', engine: 'websub', ...sanitizeStringFields(r) }));
     }
   }
   return out.join('\n');
@@ -96,5 +111,5 @@ module.exports = {
   parseArgs,
   registerConsole,
   // Exposed for unit testing; not part of the public API.
-  _internal: { logHuman, logJson }
+  _internal: { logHuman, logJson, sanitize }
 };
