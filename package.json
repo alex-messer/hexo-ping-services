@@ -1,6 +1,6 @@
 {
   "name": "hexo-ping-services",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Notify IndexNow, XML-RPC, and WebSub update services on Hexo publish/update.",
   "license": "MIT",
   "author": "alex-messer <alex@messer.pw>",
