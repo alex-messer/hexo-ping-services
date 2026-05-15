@@ -4,7 +4,7 @@ Notify [IndexNow](https://www.indexnow.org/) (Bing, Yandex, Naver, Seznam, Yep),
 a curated XML-RPC `weblogUpdates.ping` endpoint set, and [WebSub](https://www.w3.org/TR/websub/)
 hubs whenever your Hexo blog publishes a new post or updates an existing one.
 
-- **Zero runtime dependencies.** Native `fetch` + a 30-line XML-RPC encoder.
+- **Zero runtime dependencies.** Node stdlib `https`/`http` + a 30-line XML-RPC encoder.
 - **State-aware.** A small `.hexo-ping-state.json` file remembers the last-pinged
   content hash per URL, so unchanged posts aren't re-pinged on every build.
 - **Tested.** ~130 unit tests run on Node 22 + 24 via `node --test`.

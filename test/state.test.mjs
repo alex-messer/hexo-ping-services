@@ -304,6 +304,60 @@ test('lock file is written with our PID', async () => {
   } finally { cleanup(); }
 });
 
+test('concurrent stale-lock takeover lets exactly one acquirer into the critical section', async () => {
+  const { file, cleanup } = tmp();
+  try {
+    const lockPath = file + '.lock';
+    // 999999 is above pid_max on every common CI kernel, so process.kill(0) returns ESRCH.
+    const fd = openSync(lockPath, 'wx');
+    writeSync(fd, '999999');
+    closeSync(fd);
+
+    // Park acquirer B in the TOCTOU window: it has confirmed the SAME stale PID
+    // but has not yet taken the lock over. While B is parked, A takes the stale
+    // lock over and holds it. Then release B. A non-atomic takeover lets B
+    // blindly unlink A's freshly-created, live lock and acquire it too — two
+    // holders at once. The atomic-rename takeover must instead make B fail the
+    // claim and fall back to the normal wait.
+    let parkB;
+    let releaseB;
+    const bParked = new Promise((r) => { parkB = r; });
+    const bWindow = new Promise((r) => { releaseB = r; });
+    let calls = 0;
+    _internal._onStaleConfirmed = async () => {
+      calls++;
+      if (calls === 1) {
+        parkB();
+        await bWindow;
+      }
+    };
+
+    const bAcquire = _internal.acquireLock(file, 3000);
+    await bParked;
+    // A takes over the stale lock and holds it (calls === 2, no park).
+    const aLock = await _internal.acquireLock(file, 3000);
+    const aPid = readFileSync(aLock, 'utf8').trim();
+    assert.equal(aPid, String(process.pid), 'A should hold the lock with its own PID');
+
+    releaseB();
+    // B must NOT have acquired while A still holds the lock. Give B a moment to
+    // (wrongly) steal it if the takeover is non-atomic.
+    const raced = await Promise.race([
+      bAcquire.then(() => 'b-acquired'),
+      new Promise((r) => setTimeout(() => r('still-waiting'), 200))
+    ]);
+    assert.equal(raced, 'still-waiting', 'B stole a lock that A legitimately holds');
+
+    _internal.releaseLock(aLock);
+    const bLock = await bAcquire;
+    _internal.releaseLock(bLock);
+    assert.equal(existsSync(lockPath), false, 'lock must be released');
+  } finally {
+    _internal._onStaleConfirmed = undefined;
+    cleanup();
+  }
+});
+
 test('readState discards __proto__ key from state.urls', () => {
   const { file, cleanup } = tmp();
   try {

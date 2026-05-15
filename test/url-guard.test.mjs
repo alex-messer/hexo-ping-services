@@ -292,3 +292,33 @@ test('default behavior (no resolveDns) still returns parsed URL synchronously', 
   assert.equal(u.hostname, 'api.indexnow.org');
   assert.equal(typeof u.then, 'undefined');
 });
+
+test('resolveDns:true pins the validated IP so a rebinding re-resolution is structurally impossible (MED-01)', async () => {
+  const dnsMod = await import('node:dns');
+  const orig = dnsMod.promises.lookup;
+  // Validation sees a public IP...
+  dnsMod.promises.lookup = async () => [{ address: '93.184.216.34', family: 4 }];
+  let u;
+  try {
+    u = await assertPublicHttpUrl('https://attacker.example.com/', { resolveDns: true });
+  } finally {
+    dnsMod.promises.lookup = orig;
+  }
+  assert.deepEqual(u.validatedAddresses, [{ address: '93.184.216.34', family: 4 }]);
+  assert.equal(typeof u.pinnedLookup, 'function');
+
+  // ...and the pinned lookup the engine hands to https.request only ever yields
+  // that exact validated address — it never consults the resolver again, so a
+  // ~0-TTL record that has since rebound to a private IP can't take effect.
+  const allResult = await new Promise((resolve, reject) => {
+    u.pinnedLookup('attacker.example.com', { all: true }, (err, addrs) =>
+      err ? reject(err) : resolve(addrs));
+  });
+  assert.deepEqual(allResult, [{ address: '93.184.216.34', family: 4 }]);
+
+  const singleResult = await new Promise((resolve, reject) => {
+    u.pinnedLookup('attacker.example.com', {}, (err, address, family) =>
+      err ? reject(err) : resolve({ address, family }));
+  });
+  assert.deepEqual(singleResult, { address: '93.184.216.34', family: 4 });
+});
