@@ -1,19 +1,23 @@
 'use strict';
 const { runPing } = require('../lib/run.js');
 
+// R1-F4: include U+2028 (LINE SEPARATOR) and U+2029 (PARAGRAPH SEPARATOR) —
+// both are treated as line terminators by some log viewers / terminals, opening
+// a log-splitting vector identical in class to the bidi spoofing range above.
 // eslint-disable-next-line no-control-regex
-const CONTROL_CHAR_RE = /[\x00-\x1f\x7f-\x9f‪-‮⁦-⁩]/g;
+const CONTROL_CHAR_RE = /[\x00-\x1f\x7f-\x9f\u2028\u2029‪-‮⁦-⁩]/g;
 function sanitize(s) {
   return String(s == null ? '' : s).replace(CONTROL_CHAR_RE, '?');
 }
 
 function parseArgs(argv) {
+  // R1-F5: --since and --no-state were previously parsed but never wired into
+  // runPing — silent no-ops that misled operators. Removed from both the CLI
+  // help and parser until they are actually implemented.
   return {
     all: Boolean(argv.all),
     dryRun: Boolean(argv['dry-run']),
     verbose: Boolean(argv.verbose),
-    noState: Boolean(argv['no-state']),
-    since: argv.since || null,
     urls: argv.urls
       ? String(argv.urls).split(',').map(s => s.trim()).filter(Boolean)
       : []
@@ -35,12 +39,12 @@ function logHuman(result) {
   if (result.xmlrpcResults) {
     for (const r of result.xmlrpcResults) {
       const fault = r.fault ? ` fault="${sanitize(r.fault)}"` : '';
-      lines.push(`  xmlrpc ${r.endpoint}: ${r.status}${fault} (HTTP ${r.httpStatus}, ${r.durationMs}ms)`);
+      lines.push(`  xmlrpc ${sanitize(r.endpoint)}: ${r.status}${fault} (HTTP ${r.httpStatus}, ${r.durationMs}ms)`);
     }
   }
   if (result.websubResults) {
     for (const r of result.websubResults) {
-      lines.push(`  websub ${r.hub}: ${r.status} (HTTP ${r.httpStatus}, ${r.durationMs}ms)`);
+      lines.push(`  websub ${sanitize(r.hub)}: ${r.status} (HTTP ${r.httpStatus}, ${r.durationMs}ms)`);
     }
   }
   return lines.join('\n');
@@ -81,8 +85,6 @@ function registerConsole(hexo) {
       { name: '--all', desc: 'Ping every indexable URL, ignoring state.' },
       { name: '--dry-run', desc: 'Show what would be pinged, no network.' },
       { name: '--verbose', desc: 'Per-endpoint JSON logs to stdout.' },
-      { name: '--no-state', desc: 'Skip state-file update.' },
-      { name: '--since=<value>', desc: 'Ping URLs whose date >= <value> (ISO or NN[hd]).' },
       { name: '--urls=<csv>', desc: 'Explicit URL list (comma-separated).' }
     ]
   }, async function (argv) {

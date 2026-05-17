@@ -4,6 +4,95 @@ All notable changes to `hexo-ping-services` are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3] - 2026-05-15
+
+### Security
+
+- **SSRF bypass via 6to4 / IPv4-compatible / NAT64 IPv6 encodings** (R1-F1, High).
+  `lib/url-guard.js` now unwraps and rejects three additional IPv6 encoding schemes
+  that embed private IPv4 addresses: RFC 3056 6to4 (`2002::/16`), RFC 4291 IPv4-compatible
+  (`::a.b.c.d`, deprecated), and RFC 6052 NAT64 (`64:ff9b::/96`). With `validate_dns: true`
+  (the default), DNS lookup already blocked these; with `validate_dns: false` (explicit opt-out),
+  they now fail the synchronous pattern check before reaching the resolver.
+
+- **Body-read Slowloris DoS via missing timeout** (R1-F2, Medium). `lib/http-client.js`
+  no longer clears the request timeout when response headers arrive. A malicious or slow
+  server that sends headers then drips the body byte-by-byte can no longer hold a worker
+  thread indefinitely. The AbortController deadline now covers both header and body phases.
+
+- **Terminal injection via unescaped endpoint/hub URLs** (R1-F3, Medium). `scripts/console.js`
+  now sanitizes `r.endpoint` and `r.hub` fields in human-readable output, preventing ANSI
+  escape sequences and control characters embedded in `_config.yml` from executing on the
+  operator's terminal or in CI logs.
+
+- **Log-line injection via U+2028/U+2029** (R1-F4, Low). `scripts/console.js` now strips
+  LINE SEPARATOR and PARAGRAPH SEPARATOR Unicode codepoints from output, closing a
+  log-splitting vector alongside the prior bidi-override fixes.
+
+### Changed
+
+- **Removed unimplemented CLI flags** (R1-F5, Info). The `--since` and `--no-state` command-line
+  options were parsed but never wired into the ping logic, creating silent no-op behavior.
+  Both have been removed from the parser and help text. If/when they are implemented,
+  both the parser entry, help text, and runPing wiring should be added in the same commit.
+
+### Coverage
+
+- 228 tests (216 prior + 13 new R1 regression tests; -1 empty placeholder
+  `test/scripts.test.mjs` removed). All regression tests for R1-F1 through
+  R1-F5 pass. Functions 100%, lines ≥99.8%.
+
+### Cleanup (Bottom-Up principles pass)
+
+- **YAGNI**: removed empty `test/scripts.test.mjs` placeholder; removed
+  unused `let calls = 0` and `calls++` in `test/indexnow.test.mjs` (declared
+  but never asserted).
+- **DRY**: extracted the worker-pool pattern duplicated in `lib/xmlrpc.js`
+  (`pingAll`) and `lib/websub.js` (`publishToHubs`) into a single
+  `lib/pool.js#parallelMap(items, task, concurrency)` helper. Both engines
+  now delegate; positional-index result semantics and empty-input
+  short-circuit preserved.
+- **Clean code**: applied `oxlint --fix` — six `unicorn/prefer-string-starts-ends-with`
+  rewrites in `lib/url-guard.js` (regex anchors → `String#startsWith` for
+  literal prefixes; complex `172.16-31.*.*` pattern intentionally kept as
+  regex) and two `unicorn/no-useless-fallback-in-spread` simplifications in
+  `test/coverage-extras.test.mjs` + `test/run.test.mjs`. Lint now reports
+  0 warnings / 0 errors.
+
+### Maintenance
+
+- Bumped `c8` devDependency from `^10.1.0` to `^11.0.0` (latest). `hexo`
+  devDependency stays at `^8.1.2` (latest). Coverage runner now requires
+  Node `20 || >=22` matching c8 11's engine declaration; the package's own
+  `engines.node` floor remains `>=22` per the previous release. Runtime has
+  zero dependencies, so end-users are unaffected.
+
+### Tooling
+
+- Added `lefthook` (`^2.1.6`), `oxlint` (`^1.65.0`), `@commitlint/cli` and
+  `@commitlint/config-conventional` (`^21.0.1`) as devDependencies — all
+  runtime-zero-dep promise preserved (none are bundled).
+- New npm scripts: `lint` (`oxlint`), `lint:fix` (`oxlint --fix`), and
+  `prepare` (`lefthook install || true`) which wires the git hooks after
+  `npm install` on a contributor's machine.
+- `lefthook.yml` runs `oxlint` on staged JS files (pre-commit), runs
+  `commitlint` against the commit message (commit-msg), and runs `npm test`
+  before push.
+- `.oxlintrc.json` allows the `_`-prefix convention for unused
+  catch/argument/var bindings to match Node-idiomatic style.
+- Contributors need Git `>=2.31.0` for `lefthook install`; older Git
+  silently skips hook setup (the `|| true` in `prepare` keeps `npm install`
+  from failing on legacy systems).
+
+## [0.3.2] - 2026-05-15
+
+### Fixed
+
+- Shared `http-client.js` instance + atomic stale-lock takeover in `lib/state.js`.
+  Multiple concurrent `hexo ping` runs no longer fail with "EEXIST" lock collisions
+  when the first process crashes without cleanup. Lock acquisition now retries and
+  takes over stale locks (>5s old) atomically.
+
 ## [0.3.1] - 2026-05-12
 
 ### Added

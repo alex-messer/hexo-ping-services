@@ -265,9 +265,7 @@ test('submitIndexNow does NOT retry on non-429 errors (e.g. 422)', async () => {
 });
 
 test('submitIndexNow caps Retry-After to a max to prevent stalls', async () => {
-  let calls = 0;
   const server = await startMockServer(async () => {
-    calls++;
     return { status: 429, headers: { 'retry-after': '999', 'content-type': 'application/json' }, body: '' };
   });
   try {

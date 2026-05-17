@@ -141,7 +141,7 @@ test('sanitize strips bidi isolates U+2066 through U+2069 — MED-03 extended', 
 });
 
 test('sanitize preserves chars adjacent to bidi range boundaries — MED-03 extended', () => {
-  assert.equal(sanitize('a b'), 'a b', 'U+2029 just below 202A must not be stripped');
+  assert.equal(sanitize('a‧b'), 'a‧b', 'U+2027 just below 2028 must not be stripped');
   assert.equal(sanitize('a b'), 'a b', 'U+202F just above 202E must not be stripped');
   assert.equal(sanitize('a⁥b'), 'a⁥b', 'U+2065 just below 2066 must not be stripped');
   assert.equal(sanitize('a⁪b'), 'a⁪b', 'U+206A just above 2069 must not be stripped');
@@ -164,6 +164,93 @@ test('logHuman strips 8-bit CSI and RTL override from xmlrpc fault — MED-03 ex
   assert.equal(out.includes('‮'), false, 'output must not contain RTL override');
   assert.equal(out.includes('⁦'), false, 'output must not contain LRI');
   assert.match(out, /fault="a\?31mb\?c\?d"/);
+});
+
+// R1-F3: logHuman must sanitize r.endpoint / r.hub — they originate from
+// _config.yml and can carry attacker-supplied ANSI / control bytes.
+
+test('R1-F3: logHuman strips ANSI escapes from xmlrpc endpoint string', () => {
+  const out = logHuman({
+    plan: ['https://x/'],
+    indexnowResults: null,
+    xmlrpcResults: [{
+      endpoint: 'https://rpc.example.com/\x1b[1;31mINJECTED\x1b[0m',
+      status: 'error',
+      httpStatus: 0,
+      durationMs: 5
+    }]
+  });
+  assert.equal(out.includes('\x1b'), false, 'ESC bytes must not appear in logHuman output');
+  assert.match(out, /xmlrpc https:\/\/rpc\.example\.com\/\?\[1;31mINJECTED\?\[0m: error/);
+});
+
+test('R1-F3: logHuman strips bidi override (U+202E) from xmlrpc endpoint', () => {
+  const out = logHuman({
+    plan: ['https://x/'],
+    xmlrpcResults: [{
+      endpoint: 'https://safe‮evil/path',
+      status: 'ok',
+      httpStatus: 200,
+      durationMs: 1
+    }]
+  });
+  assert.equal(out.includes('‮'), false, 'RTL override must not survive in endpoint');
+});
+
+test('R1-F3: logHuman strips ANSI escapes and 8-bit CSI from websub hub string', () => {
+  const out = logHuman({
+    plan: ['https://x/'],
+    indexnowResults: null,
+    xmlrpcResults: null,
+    websubResults: [{
+      hub: 'https://hub.example.com/\x9b31mBAD\x9b0m',
+      status: 'error',
+      httpStatus: 0,
+      durationMs: 5
+    }]
+  });
+  assert.equal(out.includes('\x9b'), false, 'C1 CSI byte must not appear in logHuman websub line');
+  assert.match(out, /websub https:\/\/hub\.example\.com\/\?31mBAD\?0m: error/);
+});
+
+// R1-F4: U+2028 (LINE SEPARATOR) and U+2029 (PARAGRAPH SEPARATOR) are
+// treated as line terminators by some terminals / log aggregators. Adding
+// them to CONTROL_CHAR_RE closes a low-severity log-splitting vector.
+
+test('R1-F4: sanitize strips U+2028 LINE SEPARATOR', () => {
+  const raw = 'safe INJECTED';
+  const out = sanitize(raw);
+  assert.equal(out.includes(' '), false, 'U+2028 must be stripped');
+  assert.equal(out, 'safe?INJECTED');
+});
+
+test('R1-F4: sanitize strips U+2029 PARAGRAPH SEPARATOR', () => {
+  const raw = 'safe INJECTED';
+  const out = sanitize(raw);
+  assert.equal(out.includes(' '), false, 'U+2029 must be stripped');
+  assert.equal(out, 'safe?INJECTED');
+});
+
+test('R1-F4: logHuman strips U+2028/U+2029 from xmlrpc fault', () => {
+  const out = logHuman({
+    plan: ['https://x/'],
+    xmlrpcResults: [{
+      endpoint: 'https://rpc/',
+      status: 'fault',
+      httpStatus: 200,
+      durationMs: 5,
+      fault: 'Ping OK hexo-ping-services: SPOOFED '
+    }]
+  });
+  assert.equal(out.includes(' '), false);
+  assert.equal(out.includes(' '), false);
+});
+
+test('R1-F4: sanitize preserves U+2027 and U+202A boundary chars', () => {
+  // Just below U+2028 and just above U+2029 — must remain untouched.
+  assert.equal(sanitize('a‧b'), 'a‧b');
+  // U+202A is the start of the existing bidi range; verify it is still stripped.
+  assert.equal(sanitize('a‪b'), 'a?b');
 });
 
 test('logJson: emits one JSON line per engine result with level', () => {

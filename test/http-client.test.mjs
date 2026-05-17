@@ -92,6 +92,41 @@ test('request readBodyCapped returns the full body when under the cap', async ()
   }
 });
 
+// R1-F2: Slowloris — body-read must be bounded by the overall request timeout.
+// A server that sends headers immediately then dribbles body bytes MUST NOT
+// hold the worker indefinitely. Before the fix, clearTimeout(timer) ran on
+// header arrival and the body phase had no time bound.
+test('R1-F2: request aborts when body read exceeds timeoutMs (slowloris-style server)', async () => {
+  const { createServer } = await import('node:http');
+  const server = createServer((req, res) => {
+    // Send headers immediately so the response callback fires…
+    res.writeHead(200, { 'content-type': 'text/xml', 'content-length': '8192' });
+    res.write('a'); // first body byte
+    // …then never send the remaining bytes. Without the fix, readBodyCapped
+    // waits forever (until the OS-level socket timeout, if any).
+  });
+  await new Promise(r => server.listen(0, '127.0.0.1', r));
+  const { port } = server.address();
+  const started = Date.now();
+  try {
+    const resp = await request(`http://127.0.0.1:${port}/`, { method: 'GET', timeoutMs: 150 });
+    assert.equal(resp.status, 200);
+    // The header arrived fine. Now readBodyCapped MUST reject within the
+    // total deadline (timeoutMs), not hang waiting for more bytes.
+    await assert.rejects(
+      resp.readBodyCapped(64 * 1024),
+      (err) => err instanceof Error
+    );
+    const elapsed = Date.now() - started;
+    // Must abort well before any default OS / Node-level timeout (~minutes).
+    // Generous bound (4×) avoids CI flakiness while still proving the bound.
+    assert.ok(elapsed < 4 * 150 + 500, `body read should respect timeoutMs (elapsed=${elapsed}ms)`);
+  } finally {
+    server.closeAllConnections?.();
+    await new Promise(r => server.close(r));
+  }
+});
+
 test('request lowercases response header names and exposes status', async () => {
   const server = await startMockServer(async () => ({
     status: 429,

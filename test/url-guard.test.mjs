@@ -293,6 +293,82 @@ test('default behavior (no resolveDns) still returns parsed URL synchronously', 
   assert.equal(typeof u.then, 'undefined');
 });
 
+// R1-F1: SSRF bypass via 6to4 / IPv4-compatible / NAT64 IPv6 encodings ------
+// Each encoding embeds an IPv4 in an IPv6 address. With `validate_dns:false`
+// the DNS path is skipped, so the synchronous string-guard MUST reject these.
+
+test('R1-F1: isPrivateHost rejects 6to4 wrapping IMDS 169.254.169.254', () => {
+  // 2002:a9fe:a9fe:: embeds 169.254.169.254 (a9fe.a9fe)
+  assert.equal(isPrivateHost('2002:a9fe:a9fe::1'), true);
+  assert.equal(isPrivateHost('[2002:a9fe:a9fe::1]'), true);
+});
+
+test('R1-F1: isPrivateHost rejects 6to4 wrapping loopback 127.0.0.1', () => {
+  // 2002:7f00:0001:: embeds 127.0.0.1
+  assert.equal(isPrivateHost('2002:7f00:1::1'), true);
+  assert.equal(isPrivateHost('[2002:7f00:1::1]'), true);
+});
+
+test('R1-F1: isPrivateHost rejects 6to4 wrapping 10.0.0.1', () => {
+  // 2002:0a00:0001:: embeds 10.0.0.1
+  assert.equal(isPrivateHost('2002:a00:1::'), true);
+});
+
+test('R1-F1: isPrivateHost rejects NAT64 prefix 64:ff9b::/96 entirely', () => {
+  // RFC 6052 — entire prefix is reserved, conservatively reject all.
+  assert.equal(isPrivateHost('64:ff9b::a9fe:a9fe'), true);  // IMDS via NAT64
+  assert.equal(isPrivateHost('[64:ff9b::a9fe:a9fe]'), true);
+  assert.equal(isPrivateHost('64:ff9b::7f00:1'), true);     // loopback via NAT64
+  assert.equal(isPrivateHost('64:ff9b::8.8.8.8'), true);    // even a "public" IPv4 mapped through NAT64
+});
+
+test('R1-F1: isPrivateHost rejects IPv4-compatible ::a.b.c.d (deprecated, no legitimate use)', () => {
+  // Dotted form (rare in URL.hostname output)
+  assert.equal(isPrivateHost('::169.254.169.254'), true);
+  // Packed-hex form (what URL canonicalises to)
+  assert.equal(isPrivateHost('::a9fe:a9fe'), true);
+  assert.equal(isPrivateHost('[::a9fe:a9fe]'), true);
+  assert.equal(isPrivateHost('::7f00:1'), true);   // 127.0.0.1
+  assert.equal(isPrivateHost('::a00:1'), true);    // 10.0.0.1
+});
+
+test('R1-F1: isPrivateHost still allows ::1 and :: literals (not IPv4-compat)', () => {
+  // Sanity: the new IPv4-compat unwrap MUST NOT swallow the loopback / unspecified literals
+  // (they were already covered by the explicit branch above; this guards against regressions).
+  assert.equal(isPrivateHost('::1'), true);
+  assert.equal(isPrivateHost('::'), true);
+});
+
+test('R1-F1: assertPublicHttpUrl rejects 6to4 / NAT64 / IPv4-compat URLs synchronously (validate_dns:false path)', () => {
+  const cases = [
+    'http://[2002:a9fe:a9fe::1]/latest/meta-data/',  // 6to4 -> IMDS
+    'http://[2002:7f00:1::1]/',                       // 6to4 -> 127.0.0.1
+    'http://[64:ff9b::a9fe:a9fe]/latest/meta-data/',  // NAT64 -> IMDS
+    'http://[64:ff9b::7f00:1]/',                      // NAT64 -> loopback
+    'http://[::a9fe:a9fe]/latest/meta-data/',         // IPv4-compat -> IMDS
+    'http://[::7f00:1]/'                              // IPv4-compat -> loopback
+  ];
+  for (const c of cases) {
+    assert.throws(
+      () => assertPublicHttpUrl(c),
+      /refusing private\/loopback host/,
+      `must reject ${c}`
+    );
+  }
+});
+
+test('R1-F1: internal unwrap helpers extract the embedded IPv4 correctly', () => {
+  assert.equal(_internal.unwrap6to4('2002:a9fe:a9fe::1'), '169.254.169.254');
+  assert.equal(_internal.unwrap6to4('[2002:7f00:1::]'), '127.0.0.1');
+  assert.equal(_internal.unwrap6to4('2606:4700::1111'), null);
+  assert.equal(_internal.unwrapIpv4CompatIpv6('::a9fe:a9fe'), '169.254.169.254');
+  assert.equal(_internal.unwrapIpv4CompatIpv6('::1'), null);  // explicitly null for literal
+  assert.equal(_internal.unwrapIpv4CompatIpv6('::ffff:a9fe:a9fe'), null);  // ::ffff: path
+  assert.equal(_internal.isNat64Prefix('64:ff9b::a9fe:a9fe'), true);
+  assert.equal(_internal.isNat64Prefix('[64:ff9b::1]'), true);
+  assert.equal(_internal.isNat64Prefix('2606:4700::1111'), false);
+});
+
 test('resolveDns:true pins the validated IP so a rebinding re-resolution is structurally impossible (MED-01)', async () => {
   const dnsMod = await import('node:dns');
   const orig = dnsMod.promises.lookup;

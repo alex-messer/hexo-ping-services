@@ -1,5 +1,10 @@
 # hexo-ping-services
 
+[![npm version](https://img.shields.io/npm/v/hexo-ping-services.svg)](https://www.npmjs.com/package/hexo-ping-services)
+[![npm downloads](https://img.shields.io/npm/dm/hexo-ping-services.svg)](https://www.npmjs.com/package/hexo-ping-services)
+[![node](https://img.shields.io/node/v/hexo-ping-services.svg)](https://nodejs.org/)
+[![license](https://img.shields.io/npm/l/hexo-ping-services.svg)](./LICENSE)
+
 Notify [IndexNow](https://www.indexnow.org/) (Bing, Yandex, Naver, Seznam, Yep),
 a curated XML-RPC `weblogUpdates.ping` endpoint set, and [WebSub](https://www.w3.org/TR/websub/)
 hubs whenever your Hexo blog publishes a new post or updates an existing one.
@@ -7,7 +12,10 @@ hubs whenever your Hexo blog publishes a new post or updates an existing one.
 - **Zero runtime dependencies.** Node stdlib `https`/`http` + a 30-line XML-RPC encoder.
 - **State-aware.** A small `.hexo-ping-state.json` file remembers the last-pinged
   content hash per URL, so unchanged posts aren't re-pinged on every build.
-- **Tested.** ~130 unit tests run on Node 22 + 24 via `node --test`.
+- **Hardened.** Multi-layer SSRF defense (IPv4, IPv6 literals, 6to4/NAT64/IPv4-compat encodings).
+  Request timeouts cover both headers and body read (Slowloris DoS mitigation).
+  Config values sanitized in output (terminal injection hardening).
+- **Tested.** ~230 unit tests run on Node 22 + 24 via `node --test`.
 
 ## Why
 
@@ -18,18 +26,25 @@ this package fills that gap.
 
 ## Install
 
-This plugin is not published to the npm registry. Install it from a pinned
-GitHub tag instead:
+From the npm registry:
 
 ```sh
-pnpm add -D "git+https://github.com/alex-messer/hexo-ping-services.git#v0.3.1"
-# or: npm install --save-dev "git+https://github.com/alex-messer/hexo-ping-services.git#v0.3.1"
+npm install --save-dev hexo-ping-services
+# or: pnpm add -D hexo-ping-services
+# or: yarn add -D hexo-ping-services
 ```
 
-If your CI blocks `git+https://`, fall back to the release tarball:
+Pin to a specific version for reproducible builds:
 
 ```sh
-pnpm add -D "https://github.com/alex-messer/hexo-ping-services/archive/refs/tags/v0.3.1.tar.gz"
+npm install --save-dev hexo-ping-services@0.3.2
+```
+
+If you need to install a pre-release or a commit from `main`, fall back to the
+git source:
+
+```sh
+npm install --save-dev "git+https://github.com/alex-messer/hexo-ping-services.git#main"
 ```
 
 Requirements: Node `>=22`, Hexo `^7 || ^8` (peer-dep, supplied by your site).
@@ -84,11 +99,11 @@ Add the state file to `.gitignore`:
 ### Command line
 
 ```sh
-pnpm exec hexo ping              # ping only new/changed posts (default)
-pnpm exec hexo ping --all        # ignore state, ping every indexable URL
-pnpm exec hexo ping --dry-run    # show what would be pinged, no HTTP
+pnpm exec hexo ping                                                 # ping only new/changed posts (default)
+pnpm exec hexo ping --all                                           # ignore state, ping every indexable URL
+pnpm exec hexo ping --dry-run                                       # show what would be pinged, no HTTP
 pnpm exec hexo ping --urls=https://example.com/foo/,https://example.com/bar/
-pnpm exec hexo ping --verbose    # per-endpoint JSON logs
+pnpm exec hexo ping --verbose                                       # per-endpoint JSON logs
 ```
 
 ### CI (recommended)

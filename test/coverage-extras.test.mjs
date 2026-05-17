@@ -74,9 +74,9 @@ function fakeHexo(posts, baseDir, configOverride = {}) {
       title: 'EinfachAleks',
       url: 'https://einfach-aleks.com',
       ping: {
-        indexnow: { key: 'abc123', key_location: '/abc.txt', ...(configOverride.indexnow || {}) },
+        indexnow: { key: 'abc123', key_location: '/abc.txt', ...configOverride.indexnow },
         xmlrpc: configOverride.xmlrpc || { endpoints: [] },
-        ...(configOverride.top || {})
+        ...configOverride.top
       }
     },
     locals: { get: (n) => n === 'posts' ? { data: posts } : null }

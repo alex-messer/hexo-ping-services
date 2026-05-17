@@ -7,8 +7,6 @@ test('parseArgs returns defaults for empty argv', () => {
   assert.equal(r.all, false);
   assert.equal(r.dryRun, false);
   assert.equal(r.verbose, false);
-  assert.equal(r.noState, false);
-  assert.equal(r.since, null);
   assert.deepEqual(r.urls, []);
 });
 
@@ -23,14 +21,19 @@ test('parseArgs reads --dry-run and --verbose', () => {
   assert.equal(r.verbose, true);
 });
 
-test('parseArgs reads --no-state', () => {
+// R1-F5: --no-state and --since were silent no-ops; both removed from
+// parser and help text. Tests assert the keys are absent so the regression
+// (re-introducing a silent no-op) is caught immediately.
+test('parseArgs does NOT expose noState (R1-F5: removed silent no-op)', () => {
   const r = parseArgs({ 'no-state': true });
-  assert.equal(r.noState, true);
+  assert.equal(r.noState, undefined);
+  assert.equal('noState' in r, false);
 });
 
-test('parseArgs reads --since=ISO', () => {
+test('parseArgs does NOT expose since (R1-F5: removed silent no-op)', () => {
   const r = parseArgs({ since: '2026-05-01' });
-  assert.equal(r.since, '2026-05-01');
+  assert.equal(r.since, undefined);
+  assert.equal('since' in r, false);
 });
 
 test('parseArgs reads --urls as csv', () => {
