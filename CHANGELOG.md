@@ -4,6 +4,27 @@ All notable changes to `hexo-ping-services` are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] - 2026-07-22
+
+### Security
+
+- **`brace-expansion` DoS pin** (GHSA-3jxr-9vmj-r5cp). Added an `overrides` entry pinning
+  the transitive `brace-expansion` dependency (pulled in via `c8` → `minimatch`) to
+  `>=5.0.7`, closing an exponential-time DoS in `expand()`. Dev-tooling only; never
+  shipped in the published package.
+- **`js-yaml` quadratic-DoS fix** (GHSA-h67p-54hq-rp68). Transitively resolved to `4.3.0`
+  (patched) via the devDependency upgrade below. Dev-tooling only.
+
+### Changed
+
+- Upgraded devDependencies to latest: `@commitlint/cli` 21.2.1, `@commitlint/config-conventional`
+  21.2.0, `c8` 12.0.0 (major), `lefthook` 2.1.10, `oxlint` 1.75.0.
+- Regenerated `package-lock.json` under Node 22/npm 10 so `npm ci` passes cleanly on both
+  CI matrix legs (Node 22 and Node 24) — npm 10's stricter lockfile validation was rejecting
+  a lockfile last written by npm 11.
+- Corrected README: fixed stale test count, removed outdated version-pin/git-source install
+  snippets, switched CLI examples from `pnpm exec` to `npx`.
+
 ## [0.3.3] - 2026-05-15
 
 ### Security
