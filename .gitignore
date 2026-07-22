@@ -5,4 +5,7 @@ test-results.xml
 *.log
 .DS_Store
 .claude
+skills/
+.planning/
 docs/
+CLAUDE.md

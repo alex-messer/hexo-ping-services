@@ -15,7 +15,7 @@ hubs whenever your Hexo blog publishes a new post or updates an existing one.
 - **Hardened.** Multi-layer SSRF defense (IPv4, IPv6 literals, 6to4/NAT64/IPv4-compat encodings).
   Request timeouts cover both headers and body read (Slowloris DoS mitigation).
   Config values sanitized in output (terminal injection hardening).
-- **Tested.** ~230 unit tests run on Node 22 + 24 via `node --test`.
+- **Tested.** 228 unit tests run on Node 22 + 24 via `node --test`.
 
 ## Why
 
@@ -32,19 +32,6 @@ From the npm registry:
 npm install --save-dev hexo-ping-services
 # or: pnpm add -D hexo-ping-services
 # or: yarn add -D hexo-ping-services
-```
-
-Pin to a specific version for reproducible builds:
-
-```sh
-npm install --save-dev hexo-ping-services@0.3.2
-```
-
-If you need to install a pre-release or a commit from `main`, fall back to the
-git source:
-
-```sh
-npm install --save-dev "git+https://github.com/alex-messer/hexo-ping-services.git#main"
 ```
 
 Requirements: Node `>=22`, Hexo `^7 || ^8` (peer-dep, supplied by your site).
@@ -99,11 +86,11 @@ Add the state file to `.gitignore`:
 ### Command line
 
 ```sh
-pnpm exec hexo ping                                                 # ping only new/changed posts (default)
-pnpm exec hexo ping --all                                           # ignore state, ping every indexable URL
-pnpm exec hexo ping --dry-run                                       # show what would be pinged, no HTTP
-pnpm exec hexo ping --urls=https://example.com/foo/,https://example.com/bar/
-pnpm exec hexo ping --verbose                                       # per-endpoint JSON logs
+npx hexo ping                                                       # ping only new/changed posts (default)
+npx hexo ping --all                                                 # ignore state, ping every indexable URL
+npx hexo ping --dry-run                                             # show what would be pinged, no HTTP
+npx hexo ping --urls=https://example.com/foo/,https://example.com/bar/
+npx hexo ping --verbose                                             # per-endpoint JSON logs
 ```
 
 ### CI (recommended)
@@ -112,7 +99,7 @@ After your deploy step:
 
 ```yaml
 - name: Notify search engines
-  run: pnpm exec hexo ping
+  run: npx hexo ping
 ```
 
 ### After-generate filter (optional)
